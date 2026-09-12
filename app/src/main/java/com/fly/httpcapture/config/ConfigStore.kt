@@ -50,6 +50,11 @@ class ConfigStore(context: Context) {
         }
     }
 
+    fun updateProfileAddress(id: String, address: ProfileAddress) {
+        val current = load()
+        saveProfiles(ProfileAddressPolicy.update(current.profiles, id, address))
+    }
+
     fun savePackages(packages: Set<String>) {
         preferences.edit().putStringSet(KEY_PACKAGES, packages).apply()
     }

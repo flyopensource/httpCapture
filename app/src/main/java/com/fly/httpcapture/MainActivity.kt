@@ -22,6 +22,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,6 +37,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -44,7 +46,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,6 +63,8 @@ import com.fly.httpcapture.config.CaptureSettings
 import com.fly.httpcapture.config.CertificateUtils
 import com.fly.httpcapture.config.ConfigStore
 import com.fly.httpcapture.config.PairingCodec
+import com.fly.httpcapture.config.ProfileAddress
+import com.fly.httpcapture.config.ProfileAddressPolicy
 import com.fly.httpcapture.tile.CaptureTileService
 import com.fly.httpcapture.vpn.HttpCaptureVpnService
 import com.fly.httpcapture.vpn.VpnState
@@ -68,6 +74,9 @@ import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val store by lazy { ConfigStore(this) }
@@ -204,6 +213,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun HttpCaptureScreen() {
         var showApps by remember { mutableStateOf(false) }
+        var editingProfile by remember { mutableStateOf<CaptureProfile?>(null) }
         val gallery = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             uri?.let(::scanBitmap)
         }
@@ -238,6 +248,13 @@ class MainActivity : ComponentActivity() {
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         if (!installed) Button(onClick = { installCertificate(active) }) { Text("安装 CA") }
+                                        OutlinedButton(onClick = {
+                                            if (runningState) {
+                                                messageState = "请先停止抓包，再修改 Charles IP 和端口"
+                                            } else {
+                                                editingProfile = active
+                                            }
+                                        }) { Text("修改地址") }
                                         TextButton(onClick = { store.removeProfile(active.id); reload() }) { Text("删除") }
                                     }
                                 }
@@ -308,6 +325,21 @@ class MainActivity : ComponentActivity() {
                 onSave = { store.savePackages(it); reload(); showApps = false },
             )
         }
+        editingProfile?.let { profile ->
+            EditProfileAddressDialog(
+                profile = profile,
+                onDismiss = { editingProfile = null },
+                onSave = { address ->
+                    runCatching { store.updateProfileAddress(profile.id, address) }
+                        .onSuccess {
+                            reload()
+                            editingProfile = null
+                            messageState = "已更新 ${profile.name}：${address.host}:${address.port}"
+                        }
+                        .onFailure { messageState = "修改失败：${it.message}" }
+                },
+            )
+        }
     }
 
     private fun requestTile() {
@@ -326,39 +358,130 @@ class MainActivity : ComponentActivity() {
     private fun AppPickerDialog(initial: Set<String>, onDismiss: () -> Unit, onSave: (Set<String>) -> Unit) {
         var selected by remember { mutableStateOf(initial) }
         var query by remember { mutableStateOf("") }
-        val apps = remember { loadLaunchableApps() }
-        val filtered = apps.filter { query.isBlank() || it.label.contains(query, true) || it.packageName.contains(query, true) }
+        var loadAttempt by remember { mutableIntStateOf(0) }
+        var loadState by remember { mutableStateOf<AppLoadState>(AppLoadState.Loading) }
+        LaunchedEffect(loadAttempt) {
+            loadState = AppLoadState.Loading
+            loadState = try {
+                AppLoadState.Loaded(withContext(Dispatchers.IO) { loadLaunchableApps() })
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                AppLoadState.Failed(error.message ?: "未知错误")
+            }
+        }
+        val apps = (loadState as? AppLoadState.Loaded)?.apps.orEmpty()
+        val filtered = remember(apps, query) {
+            apps.filter { query.isBlank() || it.label.contains(query, true) || it.packageName.contains(query, true) }
+        }
+        LaunchedEffect(loadState) {
+            val loaded = loadState as? AppLoadState.Loaded ?: return@LaunchedEffect
+            selected = selected.intersect(loaded.apps.mapTo(mutableSetOf(), AppRow::packageName))
+        }
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("选择抓包应用") },
             text = {
                 Column {
-                    OutlinedTextField(query, { query = it }, label = { Text("搜索名称或包名") }, modifier = Modifier.fillMaxWidth())
-                    LazyColumn(Modifier.height(430.dp)) {
-                        items(filtered, key = { it.packageName }) { app ->
-                            Row(
-                                Modifier.fillMaxWidth().padding(vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                AndroidView(
-                                    factory = { ImageView(it) },
-                                    update = { it.setImageDrawable(app.icon) },
-                                    modifier = Modifier.size(38.dp),
-                                )
-                                Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
-                                    Text(app.label)
-                                    Text(app.packageName, style = MaterialTheme.typography.bodySmall)
-                                    if (app.debugTrust) Text("HTTPS Debug Trust 已接入", color = Color(0xFF15803D), style = MaterialTheme.typography.labelSmall)
+                    OutlinedTextField(
+                        query,
+                        { query = it },
+                        label = { Text("搜索名称或包名") },
+                        enabled = loadState is AppLoadState.Loaded,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Box(Modifier.fillMaxWidth().height(430.dp), contentAlignment = Alignment.Center) {
+                        when (val state = loadState) {
+                            AppLoadState.Loading -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(12.dp))
+                                Text("正在加载已安装应用…")
+                            }
+                            is AppLoadState.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("加载失败：${state.message}", color = Color(0xFFB91C1C))
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedButton(onClick = { loadAttempt++ }) { Text("重试") }
+                            }
+                            is AppLoadState.Loaded -> if (filtered.isEmpty()) {
+                                Text(if (query.isBlank()) "没有可选择的应用" else "没有匹配的应用")
+                            } else {
+                                LazyColumn(Modifier.fillMaxSize()) {
+                                    items(filtered, key = { it.packageName }) { app ->
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            AndroidView(
+                                                factory = { ImageView(it) },
+                                                update = { it.setImageDrawable(app.icon) },
+                                                modifier = Modifier.size(38.dp),
+                                            )
+                                            Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
+                                                Text(app.label)
+                                                Text(app.packageName, style = MaterialTheme.typography.bodySmall)
+                                                if (app.debugTrust) Text("HTTPS Debug Trust 已接入", color = Color(0xFF15803D), style = MaterialTheme.typography.labelSmall)
+                                            }
+                                            Checkbox(checked = app.packageName in selected, onCheckedChange = { checked ->
+                                                selected = if (checked) selected + app.packageName else selected - app.packageName
+                                            })
+                                        }
+                                    }
                                 }
-                                Checkbox(checked = app.packageName in selected, onCheckedChange = { checked ->
-                                    selected = if (checked) selected + app.packageName else selected - app.packageName
-                                })
                             }
                         }
                     }
                 }
             },
-            confirmButton = { Button(onClick = { onSave(selected) }) { Text("保存 (${selected.size})") } },
+            confirmButton = {
+                Button(onClick = { onSave(selected) }, enabled = loadState is AppLoadState.Loaded) {
+                    Text("保存 (${selected.size})")
+                }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        )
+    }
+
+    @Composable
+    private fun EditProfileAddressDialog(
+        profile: CaptureProfile,
+        onDismiss: () -> Unit,
+        onSave: (ProfileAddress) -> Unit,
+    ) {
+        var host by remember(profile.id) { mutableStateOf(profile.host) }
+        var port by remember(profile.id) { mutableStateOf(profile.port.toString()) }
+        val validation = remember(host, port) { runCatching { ProfileAddressPolicy.parse(host, port) } }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("修改 Charles 地址") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(profile.name, style = MaterialTheme.typography.titleSmall)
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { host = it },
+                        label = { Text("IP 或 Host") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = { port = it.filter(Char::isDigit).take(5) },
+                        label = { Text("Charles 端口") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    validation.exceptionOrNull()?.message?.let {
+                        Text(it, color = Color(0xFFB91C1C), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("修改地址不会更换或重新安装 CA 证书。", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { onSave(validation.getOrThrow()) }, enabled = validation.isSuccess) {
+                    Text("保存")
+                }
+            },
             dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
         )
     }
@@ -383,4 +506,10 @@ class MainActivity : ComponentActivity() {
         val icon: android.graphics.drawable.Drawable,
         val debugTrust: Boolean,
     )
+
+    private sealed interface AppLoadState {
+        data object Loading : AppLoadState
+        data class Loaded(val apps: List<AppRow>) : AppLoadState
+        data class Failed(val message: String) : AppLoadState
+    }
 }
