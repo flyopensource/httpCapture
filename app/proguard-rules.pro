@@ -1,0 +1,1 @@
+-keep class com.github.shadowsocks.bg.Tun2proxy { *; }

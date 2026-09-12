@@ -1,0 +1,34 @@
+.gradle/
+.kotlin/
+.idea/
+local.properties
+**/build/
+*.iml
+*.apk
+*.aar
+cli/bin/
+cli/.httpcapture/
+native/tun2proxy/
+
+# Android release signing must stay local. Never commit signing keys or passwords.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pkcs12
+*.key
+keystore.properties
+signing.properties
+key.properties
+release-signing.properties
+
+# Local certificates and pairing/capture artifacts can expose developer or traffic data.
+*.pem
+*.cer
+*.crt
+*.der
+*.chls
+*.har
+captures/
+pair.png
+pair.txt

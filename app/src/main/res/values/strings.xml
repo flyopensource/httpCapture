@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">HTTP Capture</string>
+    <string name="tile_name">抓包开关</string>
+    <string name="vpn_description">仅转发已选择应用的流量到 Charles</string>
+</resources>
