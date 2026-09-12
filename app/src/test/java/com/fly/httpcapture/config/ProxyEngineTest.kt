@@ -7,6 +7,7 @@ import org.junit.Test
 class ProxyEngineTest {
     @Test
     fun wireNamesResolveToSupportedEngines() {
+        assertEquals(ProxyEngine.PROXIFY, ProxyEngine.fromWire(" Proxify "))
         assertEquals(ProxyEngine.CHARLES, ProxyEngine.fromWire("charles"))
         assertEquals(ProxyEngine.MITMPROXY, ProxyEngine.fromWire(" MITMPROXY "))
         assertEquals(ProxyEngine.CUSTOM, ProxyEngine.fromWire("custom"))

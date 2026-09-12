@@ -1,6 +1,7 @@
 package com.fly.httpcapture.config
 
 enum class ProxyEngine(val wireName: String, val displayName: String) {
+    PROXIFY("proxify", "Proxify"),
     CHARLES("charles", "Charles"),
     MITMPROXY("mitmproxy", "mitmproxy"),
     CUSTOM("custom", "自定义代理");

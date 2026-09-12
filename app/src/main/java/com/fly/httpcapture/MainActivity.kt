@@ -50,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -439,13 +440,28 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 LazyColumn(Modifier.fillMaxSize()) {
                                     items(filtered, key = { it.packageName }) { app ->
+                                        val icon by produceState<android.graphics.drawable.Drawable?>(
+                                            initialValue = null,
+                                            key1 = app.packageName,
+                                        ) {
+                                            value = withContext(Dispatchers.IO) {
+                                                runCatching { packageManager.getApplicationIcon(app.packageName) }.getOrNull()
+                                            }
+                                        }
                                         Row(
                                             Modifier.fillMaxWidth().padding(vertical = 7.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             AndroidView(
-                                                factory = { ImageView(it) },
-                                                update = { it.setImageDrawable(app.icon) },
+                                                factory = { context ->
+                                                    ImageView(context).apply {
+                                                        setImageResource(android.R.drawable.sym_def_app_icon)
+                                                    }
+                                                },
+                                                update = { view ->
+                                                    view.setImageDrawable(icon)
+                                                    if (icon == null) view.setImageResource(android.R.drawable.sym_def_app_icon)
+                                                },
                                                 modifier = Modifier.size(38.dp),
                                             )
                                             Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
@@ -524,7 +540,6 @@ class MainActivity : ComponentActivity() {
                 AppRow(
                     packageName = info.packageName,
                     label = info.loadLabel(packageManager).toString(),
-                    icon = info.loadIcon(packageManager),
                     debugTrust = info.metaData?.getBoolean("com.fly.httpcapture.DEBUG_TRUST", false) == true,
                 )
             }
@@ -534,7 +549,6 @@ class MainActivity : ComponentActivity() {
     private data class AppRow(
         val packageName: String,
         val label: String,
-        val icon: android.graphics.drawable.Drawable,
         val debugTrust: Boolean,
     )
 

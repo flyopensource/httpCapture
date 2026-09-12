@@ -1,6 +1,6 @@
 # httpcapture CLI
 
-纯 Go、无 CGO 的桌面工具。当前只发布 Linux AMD64 单文件版本。
+纯 Go、无 CGO 的桌面工具。当前只发布 Linux AMD64 单文件版本；Proxify 已编入同一个可执行文件，不需要安装 Go、Python 或外部 Proxify。
 
 ## 安装
 
@@ -12,7 +12,28 @@ httpcapture version
 
 不希望安装到系统目录时，也可以直接执行 `./httpcapture-linux-amd64`。
 
-## 管理 mitmproxy
+## 内嵌 Proxify
+
+启动、查询和停止默认代理：
+
+```bash
+httpcapture proxy proxify start
+httpcapture proxy proxify status
+httpcapture proxy proxify stop
+```
+
+默认监听 `0.0.0.0:8888`，每个请求或响应最多保存 4 MiB Body。可以调整监听地址、端口和上限：
+
+```bash
+httpcapture proxy proxify start \
+  --host 0.0.0.0 \
+  --port 8888 \
+  --max-body-bytes 8388608
+```
+
+CA、私钥、进程状态、运行日志和实时 JSONL 保存在当前用户的 httpCapture 配置目录，敏感文件权限为 `0600`。`stop` 只结束由当前 CLI 启动且进程身份一致的 Proxify。
+
+## 管理备用 mitmproxy
 
 CLI 不内置 mitmproxy。先在系统中安装可执行文件 `mitmdump`，再运行：
 
@@ -38,7 +59,14 @@ CLI 将状态和 `mitmdump.log` 保存在当前用户配置目录，文件权限
 httpcapture pair
 ```
 
-不指定 `--engine` 时保持 Charles 用法：CLI 自动选择局域网 IPv4、使用端口 `8888`，并查找：
+不指定 `--engine` 时使用 Proxify：CLI 自动选择局域网 IPv4、使用端口 `8888`，并读取内嵌 Proxify 生成的 CA。首次配对前先执行：
+
+```bash
+httpcapture proxy proxify start
+httpcapture pair
+```
+
+Charles 用法需要指定 `--engine charles`，CLI 会查找：
 
 - `~/.charles/ca/charles-proxy-ssl-proxying-certificate.cer`
 - `~/.charles/ca/charles-proxy-ssl-proxying-certificate.pem`
@@ -47,6 +75,7 @@ httpcapture pair
 
 ```bash
 httpcapture pair \
+  --engine charles \
   --host 192.168.1.10 \
   --port 8888 \
   --cert charles-ca.cer \
@@ -82,10 +111,10 @@ mitmproxy 默认端口为 `8080`，默认 CA 为 `~/.mitmproxy/mitmproxy-ca-cert
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--engine` | `charles` | `charles`、`mitmproxy` 或 `custom` |
+| `--engine` | `proxify` | `proxify`、`charles`、`mitmproxy` 或 `custom` |
 | `--host` | 自动检测 | 手机可以访问的本机 IPv4；同时作为代理地址和临时服务监听地址 |
-| `--port` | 按引擎 | Charles/custom 为 `8888`，mitmproxy 为 `8080` |
-| `--cert` | 按引擎查找 | Charles 或 mitmproxy CA；custom 必须指定，只支持 DER/PEM |
+| `--port` | 按引擎 | Proxify/Charles/custom 为 `8888`，mitmproxy 为 `8080` |
+| `--cert` | 按引擎查找 | Proxify、Charles 或 mitmproxy CA；custom 必须指定，只支持 DER/PEM |
 | `--name` | CA 名称 | APK 中显示的电脑配置名称 |
 | `--out` | `httpcapture-pair.png` | 二维码 PNG 输出路径 |
 | `--serve-port` | `0` | 临时服务端口；`0` 表示自动选择空闲端口 |
@@ -107,7 +136,7 @@ httpcapture pair --host 192.168.1.10 --serve-port 39001
 - APK 提示配置校验失败：二维码对应的会话已不可用，应重新运行 `pair` 并扫码。
 - CLI 提示二维码过期：APK 未在超时前确认导入，重新运行即可。
 
-V0.2 使用配对协议 v3，`engine` 是必填字段。开发阶段不兼容 V0.1 二维码和旧 APK，本机已有旧配置时请使用 V0.2 APK 重新扫码。
+V0.3 继续使用配对协议 v3，新增 `proxify` 引擎。开发阶段不迁移旧的本地代理配置，本机已有旧配置时请重新扫码。
 
 ### 构建 Linux AMD64
 
@@ -116,6 +145,30 @@ go test ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags='-s -w' -o bin/httpcapture-linux-amd64 .
 ```
+
+## Proxify 抓包会话
+
+Proxify 启动后，可以标记一次抓包的开始和结束：
+
+```bash
+httpcapture record start \
+  --package com.example.demo \
+  --device Pixel-5 \
+  --client-ip 192.168.1.20
+
+httpcapture record status
+httpcapture record stop
+```
+
+会话默认保存在 `~/httpcapture-sessions/<captureId>/`：
+
+- `meta.json`：引擎、包名集合、设备、IP 和毫秒时间。
+- `traffic.jsonl`：httpCapture 自己生成的流式原始数据。
+- `session.har`：停止抓包后生成的 HAR 1.2 文件。
+
+`--client-ip` 不为空时，只归档该手机 IP 的记录；多 App 只保存包名集合，不声明每条请求来自哪个包。即使只指定 `--formats har`，仍会保留作为主数据的 `traffic.jsonl`。
+
+当前限制：HTTPS MITM 可用，但客户端 HTTP/2 会降级为 HTTP/1.1；不绕过 Certificate Pinning；SSE/长响应可能被缓冲，WebSocket 实测不能可靠透传；单个 Body 默认最多保存 4 MiB，超出部分继续转发但在记录中标记为截断。
 
 ## Charles 录制
 
@@ -130,7 +183,7 @@ export HTTPCAPTURE_CHARLES_PASSWORD='...'
 
 ```bash
 httpcapture charles status
-httpcapture record start --app com.example.demo --client-ip 192.168.1.20
+httpcapture record start --engine charles --package com.example.demo --client-ip 192.168.1.20
 httpcapture record stop --out ./captures/demo --formats chls,xml,json,har
 ```
 

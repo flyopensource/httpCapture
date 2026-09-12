@@ -1,5 +1,37 @@
 # Third-party notices
 
+## Proxify
+
+The httpCapture CLI embeds the proxy implementation from
+[ProjectDiscovery Proxify](https://github.com/projectdiscovery/proxify), based
+on upstream version `v0.0.16` at commit
+`cb351162a2389e4e25c702fc60c98e8e6fa988fa`. httpCapture bypasses the upstream
+asynchronous traffic logger and uses bounded streaming capture callbacks so
+that response bodies, status codes, timing, and JSONL session boundaries are
+reliable without buffering unbounded bodies in memory.
+
+MIT License
+
+Copyright (c) 2021 ProjectDiscovery, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## tun2proxy
 
 HTTP Capture distributes Android native libraries built from

@@ -28,19 +28,32 @@ type mitmState struct {
 }
 
 func proxyCommand(args []string) error {
-	if len(args) < 2 || args[0] != "mitm" {
-		return errors.New("用法: httpcapture proxy mitm start|stop|status")
+	if len(args) < 2 {
+		return errors.New("用法: httpcapture proxy proxify|mitm start|stop|status")
 	}
-	switch args[1] {
-	case "start":
-		return mitmStart(args[2:])
-	case "stop":
-		return mitmStop(args[2:])
-	case "status":
-		return mitmStatus(args[2:])
+	switch args[0] {
+	case "proxify":
+		switch args[1] {
+		case "start":
+			return proxifyStart(args[2:])
+		case "stop":
+			return proxifyStop(args[2:])
+		case "status":
+			return proxifyStatus(args[2:])
+		}
+	case "mitm":
+		switch args[1] {
+		case "start":
+			return mitmStart(args[2:])
+		case "stop":
+			return mitmStop(args[2:])
+		case "status":
+			return mitmStatus(args[2:])
+		}
 	default:
-		return errors.New("用法: httpcapture proxy mitm start|stop|status")
+		return errors.New("用法: httpcapture proxy proxify|mitm start|stop|status")
 	}
+	return errors.New("用法: httpcapture proxy proxify|mitm start|stop|status")
 }
 
 func mitmStart(args []string) error {

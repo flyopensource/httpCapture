@@ -25,11 +25,12 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 const (
 	engineCharles   = "charles"
 	engineMitmproxy = "mitmproxy"
+	engineProxify   = "proxify"
 	engineCustom    = "custom"
 )
 
@@ -44,11 +45,23 @@ type pairing struct {
 }
 
 type sessionState struct {
-	CaptureID string   `json:"captureId"`
-	Apps      []string `json:"apps"`
-	ClientIP  string   `json:"clientIp,omitempty"`
-	StartedMS int64    `json:"startedMs"`
-	StoppedMS int64    `json:"stoppedMs,omitempty"`
+	CaptureID      string   `json:"captureId"`
+	Engine         string   `json:"engine"`
+	EngineVersion  string   `json:"engineVersion,omitempty"`
+	EngineRevision string   `json:"engineRevision,omitempty"`
+	Packages       []string `json:"packages"`
+	DeviceName     string   `json:"deviceName,omitempty"`
+	ClientIP       string   `json:"clientIp,omitempty"`
+	ProxyHost      string   `json:"proxyHost,omitempty"`
+	ProxyPort      int      `json:"proxyPort,omitempty"`
+	StartedMS      int64    `json:"startTimeMillis"`
+	StoppedMS      int64    `json:"endTimeMillis,omitempty"`
+	Status         string   `json:"status"`
+	SessionDir     string   `json:"sessionDir"`
+	TrafficSource  string   `json:"trafficSource,omitempty"`
+	StartOffset    int64    `json:"startOffset,omitempty"`
+	RequestCount   int      `json:"requestCount,omitempty"`
+	SkippedCount   int      `json:"skippedCount,omitempty"`
 }
 
 func main() {
@@ -61,6 +74,8 @@ func main() {
 		err = pairCommand(os.Args[2:])
 	case "proxy":
 		err = proxyCommand(os.Args[2:])
+	case "__proxify":
+		err = proxifyEngineCommand(os.Args[2:])
 	case "charles":
 		err = charlesCommand(os.Args[2:])
 	case "record":
@@ -85,16 +100,20 @@ func usage() {
 	fmt.Print(`httpcapture - Android 抓包代理接入工具
 
 用法:
-  httpcapture pair [--engine charles|mitmproxy|custom] [--host IP] [--port PORT] [--cert FILE] [--name NAME] [--out pair.png] [--serve-port 0] [--timeout 3m] [--terminal-qr auto|always|never]
+  httpcapture pair [--engine proxify|charles|mitmproxy|custom] [--host IP] [--port PORT] [--cert FILE] [--name NAME] [--out pair.png] [--serve-port 0] [--timeout 3m] [--terminal-qr auto|always|never]
+  httpcapture proxy proxify start [--host 0.0.0.0] [--port 8888] [--max-body-bytes 4194304]
+  httpcapture proxy proxify stop
+  httpcapture proxy proxify status
   httpcapture proxy mitm start [--host 0.0.0.0] [--port 8080] [--bin mitmdump]
   httpcapture proxy mitm stop
   httpcapture proxy mitm status
   httpcapture charles status [--proxy 127.0.0.1:8888]
-  httpcapture record start [--app PACKAGE ...] [--client-ip IP] [--clear]
-  httpcapture record stop [--out DIR] [--formats chls,xml,json,har]
+  httpcapture record start [--engine proxify|charles] [--package PACKAGE ...] [--device NAME] [--client-ip IP] [--clear]
+  httpcapture record stop [--out DIR] [--formats jsonl,har|chls,xml,json,har]
+  httpcapture record status
   httpcapture export --input session.xml|session.har --output filtered.xml|filtered.har [--from-ms N] [--to-ms N] [--client-ip IP]
 
-record start 默认不会清空 Charles 当前会话。--clear 会先备份 .chls，备份失败则不清空。
+record 默认使用 Proxify。Charles 模式需要显式指定 --engine charles；--clear 只适用于 Charles，且会先备份 .chls。
 `)
 	os.Exit(0)
 }
@@ -131,10 +150,10 @@ func (p *optionalPort) Set(value string) error {
 
 func pairCommand(args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
-	engine := fs.String("engine", engineCharles, "代理引擎：charles、mitmproxy 或 custom")
+	engine := fs.String("engine", engineProxify, "代理引擎：proxify、charles、mitmproxy 或 custom")
 	host := fs.String("host", "", "手机能访问的电脑 IP")
 	var port optionalPort
-	fs.Var(&port, "port", "HTTP proxy 端口；Charles 默认 8888，mitmproxy 默认 8080")
+	fs.Var(&port, "port", "HTTP proxy 端口；Proxify/Charles 默认 8888，mitmproxy 默认 8080")
 	certPath := fs.String("cert", "", "代理 CA 证书（DER 或 PEM）")
 	name := fs.String("name", "", "此代理配置名称")
 	out := fs.String("out", "httpcapture-pair.png", "二维码 PNG 路径")
@@ -150,7 +169,7 @@ func pairCommand(args []string) error {
 	}
 	*engine = strings.ToLower(strings.TrimSpace(*engine))
 	if !validProxyEngine(*engine) {
-		return errors.New("--engine 仅支持 charles、mitmproxy 或 custom")
+		return errors.New("--engine 仅支持 proxify、charles、mitmproxy 或 custom")
 	}
 	if !port.set {
 		port.value = defaultProxyPort(*engine)
@@ -179,6 +198,9 @@ func pairCommand(args []string) error {
 	if *certPath == "" {
 		if *engine == engineMitmproxy {
 			return errors.New("未找到 mitmproxy CA；请先运行 `httpcapture proxy mitm start` 生成证书，或使用 --cert 指定 ~/.mitmproxy/mitmproxy-ca-cert.cer")
+		}
+		if *engine == engineProxify {
+			return errors.New("未找到 Proxify CA；请先运行 `httpcapture proxy proxify start` 生成证书，或使用 --cert 指定 CA 公钥证书")
 		}
 		if *engine == engineCharles {
 			return errors.New("未找到 Charles CA，请先从 Charles 导出并使用 --cert 指定；不接受 .p12/.pfx")
@@ -336,7 +358,7 @@ func findCharlesCA() string {
 }
 
 func validProxyEngine(engine string) bool {
-	return engine == engineCharles || engine == engineMitmproxy || engine == engineCustom
+	return engine == engineCharles || engine == engineMitmproxy || engine == engineProxify || engine == engineCustom
 }
 
 func defaultProxyPort(engine string) int {
@@ -352,6 +374,8 @@ func findProxyCA(engine string) string {
 		return findCharlesCA()
 	case engineMitmproxy:
 		return findMitmproxyCA()
+	case engineProxify:
+		return findProxifyCA()
 	default:
 		return ""
 	}
@@ -437,35 +461,65 @@ func charlesCommand(args []string) error {
 
 func recordCommand(args []string) error {
 	if len(args) == 0 {
-		return errors.New("用法: httpcapture record start|stop")
+		return errors.New("用法: httpcapture record start|stop|status")
 	}
 	switch args[0] {
 	case "start":
 		return recordStart(args[1:])
 	case "stop":
 		return recordStop(args[1:])
+	case "status":
+		return recordStatus(args[1:])
 	default:
-		return errors.New("用法: httpcapture record start|stop")
+		return errors.New("用法: httpcapture record start|stop|status")
 	}
 }
 
 func recordStart(args []string) error {
 	fs := flag.NewFlagSet("record start", flag.ContinueOnError)
+	engine := fs.String("engine", engineProxify, "抓包引擎：proxify 或 charles")
 	proxy := fs.String("proxy", "127.0.0.1:8888", "Charles 代理地址")
-	clientIP := fs.String("client-ip", "", "手机在 Charles 中显示的客户端 IP")
+	clientIP := fs.String("client-ip", "", "手机在代理中显示的客户端 IP")
+	deviceName := fs.String("device", "", "本次抓包的设备名称")
 	clear := fs.Bool("clear", false, "先备份再清空当前 Charles 会话")
-	var apps repeated
-	fs.Var(&apps, "app", "本次抓包的 Android 包名，可重复")
+	var packages repeated
+	fs.Var(&packages, "package", "本次抓包的 Android 包名，可重复")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("record start 不接受位置参数")
+	}
+	if active, err := readState(); err == nil && active.StoppedMS == 0 {
+		return fmt.Errorf("已有活动抓包会话 %s，请先执行 record stop", active.CaptureID)
+	}
+	*engine = strings.ToLower(strings.TrimSpace(*engine))
+	packages = normalizePackages(packages)
+	if *engine == engineProxify {
+		if *clear {
+			return errors.New("--clear 只适用于 Charles")
+		}
+		return proxifyRecordStart(packages, strings.TrimSpace(*clientIP), strings.TrimSpace(*deviceName))
+	}
+	if *engine != engineCharles {
+		return errors.New("record 当前仅支持 proxify 或 charles")
 	}
 	client, err := newCharlesClient(*proxy)
 	if err != nil {
 		return err
 	}
+	captureID, err := newCaptureID()
+	if err != nil {
+		return err
+	}
+	sessionDir, err := sessionDirectory(captureID)
+	if err != nil {
+		return err
+	}
 	state := sessionState{
-		CaptureID: time.Now().Format("20060102-150405"), Apps: apps,
-		ClientIP: *clientIP, StartedMS: time.Now().UnixMilli(),
+		CaptureID: captureID, Engine: engineCharles, Packages: packages,
+		ClientIP: strings.TrimSpace(*clientIP), DeviceName: strings.TrimSpace(*deviceName),
+		StartedMS: time.Now().UnixMilli(), Status: "recording", SessionDir: sessionDir,
 	}
 	if *clear {
 		backupDir, err := sessionDirectory(state.CaptureID + "-pre-clear")
@@ -491,8 +545,12 @@ func recordStart(args []string) error {
 		_, _ = client.get("/recording/stop")
 		return err
 	}
+	if err := writeSessionMetadata(state); err != nil {
+		_, _ = client.get("/recording/stop")
+		return err
+	}
 	fmt.Printf("Charles 已开始记录，captureId=%s，开始时间(ms)=%d\n", state.CaptureID, state.StartedMS)
-	if len(apps) > 1 {
+	if len(packages) > 1 {
 		fmt.Println("提示: Charles 数据不能精确归属到 Android 包；这些包名仅作为本次会话标签。")
 	}
 	return nil
@@ -502,13 +560,28 @@ func recordStop(args []string) error {
 	fs := flag.NewFlagSet("record stop", flag.ContinueOnError)
 	proxy := fs.String("proxy", "127.0.0.1:8888", "Charles 代理地址")
 	out := fs.String("out", "", "输出目录")
-	formats := fs.String("formats", "chls,xml,json,har", "逗号分隔的导出格式")
+	formats := fs.String("formats", "", "逗号分隔的导出格式；Proxify 默认 jsonl,har，Charles 默认 chls,xml,json,har")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("record stop 不接受位置参数")
 	}
 	state, err := readState()
 	if err != nil {
 		return err
+	}
+	if state.Engine == engineProxify {
+		if *formats == "" {
+			*formats = "jsonl,har"
+		}
+		return proxifyRecordStop(state, *out, *formats)
+	}
+	if state.Engine != engineCharles {
+		return fmt.Errorf("活动会话使用不支持的引擎 %q", state.Engine)
+	}
+	if *formats == "" {
+		*formats = "chls,xml,json,har"
 	}
 	client, err := newCharlesClient(*proxy)
 	if err != nil {
@@ -518,12 +591,10 @@ func recordStop(args []string) error {
 		return err
 	}
 	state.StoppedMS = time.Now().UnixMilli()
-	outputDir := *out
+	originalSessionDir := state.SessionDir
+	outputDir := strings.TrimSpace(*out)
 	if outputDir == "" {
-		outputDir, err = sessionDirectory(state.CaptureID)
-		if err != nil {
-			return err
-		}
+		outputDir = state.SessionDir
 	} else if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		return err
 	}
@@ -545,14 +616,45 @@ func recordStop(args []string) error {
 			return err
 		}
 	}
-	metadata, _ := json.MarshalIndent(state, "", "  ")
-	if err := secureWrite(filepath.Join(outputDir, "capture.json"), metadata); err != nil {
+	state.Status = "completed"
+	state.SessionDir = outputDir
+	if err := writeSessionMetadata(state); err != nil {
 		return err
 	}
-	if err := writeState(state); err != nil {
+	if filepath.Clean(originalSessionDir) != filepath.Clean(outputDir) {
+		if err := writeSessionMetadataTo(originalSessionDir, state); err != nil {
+			return err
+		}
+	}
+	if err := clearState(); err != nil {
 		return err
 	}
 	fmt.Printf("Charles 已停止记录，结束时间(ms)=%d\n导出目录: %s\n", state.StoppedMS, outputDir)
+	return nil
+}
+
+func recordStatus(args []string) error {
+	if len(args) != 0 {
+		return errors.New("record status 不接受参数")
+	}
+	state, err := readState()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Println("当前没有活动的抓包会话")
+			return nil
+		}
+		return err
+	}
+	fmt.Printf("抓包会话进行中\ncaptureId: %s\n引擎: %s\n开始时间(ms): %d\n目录: %s\n", state.CaptureID, state.Engine, state.StartedMS, state.SessionDir)
+	if len(state.Packages) > 0 {
+		fmt.Println("应用:", strings.Join(state.Packages, ", "))
+	}
+	if state.Engine == engineProxify {
+		proxyState, proxyErr := readProxifyState()
+		if proxyErr != nil || !managedProcessMatches(proxyState.PID, proxyState.StartToken) {
+			fmt.Println("警告: Proxify 当前未运行；已写入的数据仍会保留。")
+		}
+	}
 	return nil
 }
 
@@ -589,6 +691,36 @@ func writeState(state sessionState) error {
 	return secureWrite(filepath.Join(directory, "active-session.json"), content)
 }
 
+func writeSessionMetadata(state sessionState) error {
+	return writeSessionMetadataTo(state.SessionDir, state)
+}
+
+func writeSessionMetadataTo(directory string, state sessionState) error {
+	if directory == "" {
+		return errors.New("抓包会话目录为空")
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	content, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return secureWrite(filepath.Join(directory, "meta.json"), content)
+}
+
+func clearState() error {
+	directory, err := configDirectory()
+	if err != nil {
+		return err
+	}
+	err = os.Remove(filepath.Join(directory, "active-session.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func readState() (sessionState, error) {
 	directory, err := configDirectory()
 	if err != nil {
@@ -596,13 +728,41 @@ func readState() (sessionState, error) {
 	}
 	content, err := os.ReadFile(filepath.Join(directory, "active-session.json"))
 	if err != nil {
-		return sessionState{}, errors.New("没有活动的抓包会话，请先执行 record start")
+		if errors.Is(err, os.ErrNotExist) {
+			return sessionState{}, fmt.Errorf("没有活动的抓包会话，请先执行 record start: %w", os.ErrNotExist)
+		}
+		return sessionState{}, err
 	}
 	var state sessionState
 	if err := json.Unmarshal(content, &state); err != nil {
 		return sessionState{}, err
 	}
 	return state, nil
+}
+
+func newCaptureID() (string, error) {
+	suffix, err := randomIdentifier(4)
+	if err != nil {
+		return "", err
+	}
+	return time.Now().Format("20060102-150405") + "-" + suffix, nil
+}
+
+func normalizePackages(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func secureWrite(path string, content []byte) error {

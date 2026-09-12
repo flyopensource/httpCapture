@@ -214,10 +214,13 @@ func TestProxyEngineDefaultsAndMitmproxyCA(t *testing.T) {
 	if defaultProxyPort(engineCharles) != 8888 || defaultProxyPort(engineCustom) != 8888 {
 		t.Fatal("Charles/custom default port changed")
 	}
+	if defaultProxyPort(engineProxify) != 8888 {
+		t.Fatal("Proxify default port must be 8888")
+	}
 	if defaultProxyPort(engineMitmproxy) != 8080 {
 		t.Fatal("mitmproxy default port must be 8080")
 	}
-	if validProxyEngine("MITMPROXY") || validProxyEngine("unknown") {
+	if !validProxyEngine(engineProxify) || validProxyEngine("MITMPROXY") || validProxyEngine("unknown") {
 		t.Fatal("engine validation must only accept normalized supported values")
 	}
 	home := t.TempDir()
@@ -231,6 +234,144 @@ func TestProxyEngineDefaultsAndMitmproxyCA(t *testing.T) {
 	}
 	if got := findMitmproxyCA(); got != caPath {
 		t.Fatalf("findMitmproxyCA() = %q, want %q", got, caPath)
+	}
+}
+
+func TestFindManagedProxifyCA(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	caPath := filepath.Join(root, "config", "httpcapture", "proxify", "cacert.pem")
+	if err := os.MkdirAll(filepath.Dir(caPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, []byte("ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := findProxifyCA(); got != caPath {
+		t.Fatalf("findProxifyCA() = %q, want %q", got, caPath)
+	}
+}
+
+func TestCapturingReadCloserStreamsAndLimitsBody(t *testing.T) {
+	completed := make(chan capturedPayload, 1)
+	body := newCapturingReadCloser(io.NopCloser(strings.NewReader("abcdef")), 6, 3, func(payload capturedPayload) {
+		completed <- payload
+	})
+	streamed, err := io.ReadAll(body)
+	if err != nil || string(streamed) != "abcdef" {
+		t.Fatalf("streamed body = %q, err=%v", streamed, err)
+	}
+	_ = body.Close()
+	payload := <-completed
+	if !payload.Truncated || payload.Data != "abc" || payload.CapturedSize != 3 || payload.DeclaredSize != 6 {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	select {
+	case duplicate := <-completed:
+		t.Fatalf("completion called twice: %+v", duplicate)
+	default:
+	}
+
+	binary := newCapturingReadCloser(io.NopCloser(strings.NewReader(string([]byte{0xff, 0x00, 0x01}))), 3, 8, nil)
+	if _, err := io.Copy(io.Discard, binary); err != nil {
+		t.Fatal(err)
+	}
+	payload = binary.payload()
+	if payload.Encoding != "base64" || payload.Data != "/wAB" || payload.Truncated {
+		t.Fatalf("unexpected binary payload: %+v", payload)
+	}
+}
+
+func TestExtractTransactionsAndExportHAR(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "live.jsonl")
+	request := capturedRequest{
+		Method: "POST", URL: "https://example.test/v1?q=yes", HTTPVersion: "HTTP/1.1",
+		Headers: map[string][]string{"Content-Type": {"application/json"}},
+		Body:    capturedPayload{DeclaredSize: 7, CapturedSize: 7, Encoding: "utf8", Data: `{"a":1}`},
+	}
+	makeTransaction := func(timestamp int64, client string) capturedTransaction {
+		return capturedTransaction{
+			SchemaVersion: captureSchemaVersion, Timestamp: time.UnixMilli(timestamp).Format(time.RFC3339Nano),
+			TimestampMillis: timestamp, DurationMillis: 12, ClientAddress: client, Request: request,
+			Response: capturedResponse{
+				StatusCode: 201, Status: "201 Created", HTTPVersion: "HTTP/1.1",
+				Headers: map[string][]string{"Content-Type": {"application/json"}},
+				Body:    capturedPayload{DeclaredSize: 11, CapturedSize: 11, Encoding: "utf8", Data: `{"ok":true}`},
+			},
+		}
+	}
+	file, err := os.OpenFile(source, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder := json.NewEncoder(file)
+	for _, transaction := range []capturedTransaction{
+		makeTransaction(99, "192.168.1.20:1000"),
+		makeTransaction(150, "192.168.1.20:1001"),
+		makeTransaction(160, "192.168.1.21:1002"),
+		makeTransaction(201, "192.168.1.20:1003"),
+	} {
+		if err := encoder.Encode(transaction); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := file.WriteString("not-json\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "traffic.jsonl")
+	info, _ := os.Stat(source)
+	count, skipped, err := extractCapturedTransactions(source, destination, 0, info.Size(), 100, 200, "192.168.1.20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || skipped != 4 {
+		t.Fatalf("count=%d skipped=%d", count, skipped)
+	}
+	harPath := filepath.Join(root, "session.har")
+	if err := exportCaptureHAR(destination, harPath); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(harPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Log struct {
+			Entries []struct {
+				Request struct {
+					Method string `json:"method"`
+				} `json:"request"`
+				Response struct {
+					Status int `json:"status"`
+				} `json:"response"`
+			} `json:"entries"`
+		} `json:"log"`
+	}
+	if err := json.Unmarshal(content, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Log.Entries) != 1 || document.Log.Entries[0].Request.Method != "POST" || document.Log.Entries[0].Response.Status != 201 {
+		t.Fatalf("unexpected HAR: %+v", document.Log.Entries)
+	}
+	for _, path := range []string{destination, harPath} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode=%v err=%v", path, info.Mode().Perm(), err)
+		}
+	}
+}
+
+func TestParseProxifyFormats(t *testing.T) {
+	formats, err := parseProxifyFormats("jsonl,har")
+	if err != nil || !formats["jsonl"] || !formats["har"] {
+		t.Fatalf("formats=%v err=%v", formats, err)
+	}
+	if _, err := parseProxifyFormats("chls"); err == nil {
+		t.Fatal("expected unsupported format error")
 	}
 }
 
@@ -364,6 +505,162 @@ func TestMitmproxyPairingV3EndToEnd(t *testing.T) {
 	}
 }
 
+func TestDefaultProxifyPairingV3EndToEnd(t *testing.T) {
+	_, der := writeTestCA(t)
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	managedCA := filepath.Join(root, "config", "httpcapture", "proxify", "cacert.pem")
+	if err := os.MkdirAll(filepath.Dir(managedCA), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedCA, der, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uriPath := filepath.Join(root, "pair.txt")
+	result := make(chan error, 1)
+	go func() {
+		result <- pairCommand([]string{
+			"--host", "127.0.0.1",
+			"--name", "test-proxify",
+			"--out", filepath.Join(root, "pair.png"),
+			"--uri-out", uriPath,
+			"--terminal-qr", "never",
+			"--timeout", "3s",
+		})
+	}()
+
+	rawURI := waitForTestFile(t, uriPath, 2*time.Second)
+	endpoint, err := url.Parse(strings.TrimSpace(string(rawURI)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.Trim(endpoint.Path, "/"), "/")
+	if endpoint.Scheme != "httpcapture" || endpoint.Host != "p" || len(parts) != 5 || parts[0] != "3" {
+		t.Fatalf("unexpected pairing URI: %q", rawURI)
+	}
+	downloadURL := "http://" + parts[1] + ":" + parts[2] + "/p/" + parts[3]
+	response, err := http.Get(downloadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload pairing
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if payload.Version != 3 || payload.Engine != engineProxify || payload.Port != 8888 {
+		t.Fatalf("unexpected pairing payload: %+v", payload)
+	}
+	request, _ := http.NewRequest(http.MethodPost, downloadURL, nil)
+	ack, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ack.Body.Close()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pair command did not exit after acknowledgement")
+	}
+}
+
+func waitForTestFile(t *testing.T, path string, timeout time.Duration) []byte {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		content, _ := os.ReadFile(path)
+		if len(content) > 0 {
+			return content
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
+	return nil
+}
+
+func TestProxifyRecordLifecycle(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	trafficPath := filepath.Join(root, "live.jsonl")
+	if err := os.WriteFile(trafficPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startToken, err := managedProcessStartToken(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxifyState(proxifyProcessState{
+		PID: os.Getpid(), StartToken: startToken, Executable: os.Args[0],
+		Host: "127.0.0.1", Port: 18888, StartedMS: time.Now().UnixMilli(),
+		TrafficPath: trafficPath, ConfigDir: filepath.Join(root, "proxify"), Version: proxifyEngineVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxifyRecordStart([]string{"com.example.app"}, "127.0.0.1", "test-device"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := capturedTransaction{
+		SchemaVersion: captureSchemaVersion,
+		Timestamp:     time.Now().Format(time.RFC3339Nano), TimestampMillis: time.Now().UnixMilli(),
+		ClientAddress: "127.0.0.1:12345", DurationMillis: 5,
+		Request:  capturedRequest{Method: "GET", URL: "https://example.test/", HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}},
+		Response: capturedResponse{StatusCode: 200, Status: "200 OK", HTTPVersion: "HTTP/1.1", Headers: map[string][]string{}},
+	}
+	file, err := os.OpenFile(trafficPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(file).Encode(transaction); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	outputDirectory := filepath.Join(root, "custom-output")
+	if err := proxifyRecordStop(state, outputDirectory, "jsonl,har"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readState(); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("active state still exists: %v", err)
+	}
+	metadata, err := os.ReadFile(filepath.Join(outputDirectory, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var completed sessionState
+	if err := json.Unmarshal(metadata, &completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "completed" || completed.RequestCount != 1 || completed.Engine != engineProxify {
+		t.Fatalf("unexpected completed state: %+v", completed)
+	}
+	if completed.SessionDir != outputDirectory {
+		t.Fatalf("completed session directory = %q, want %q", completed.SessionDir, outputDirectory)
+	}
+	originalMetadata, err := os.ReadFile(filepath.Join(state.SessionDir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalCompleted sessionState
+	if err := json.Unmarshal(originalMetadata, &originalCompleted); err != nil {
+		t.Fatal(err)
+	}
+	if originalCompleted.Status != "completed" || originalCompleted.SessionDir != outputDirectory {
+		t.Fatalf("stale original metadata: %+v", originalCompleted)
+	}
+	if _, err := os.Stat(filepath.Join(outputDirectory, "session.har")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFilterXMLByTimeAndClient(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "session.xml")
 	output := filepath.Join(t.TempDir(), "filtered.xml")
@@ -444,7 +741,11 @@ func TestRecordStartStopAndSafeClearWorkflow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := recordStart([]string{"--proxy", server.URL, "--clear", "--app", "com.example.one", "--client-ip", "192.168.1.9"}); err != nil {
+	if err := recordStart([]string{"--engine", "charles", "--proxy", server.URL, "--clear", "--package", "com.example.one", "--client-ip", "192.168.1.9"}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := readState()
+	if err != nil {
 		t.Fatal(err)
 	}
 	output := filepath.Join(root, "output")
@@ -458,7 +759,7 @@ func TestRecordStartStopAndSafeClearWorkflow(t *testing.T) {
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("unexpected Charles request order:\n got %v\nwant %v", requests, want)
 	}
-	for _, name := range []string{"session.chls", "session.xml", "session.har", "capture.json"} {
+	for _, name := range []string{"session.chls", "session.xml", "session.har", "meta.json"} {
 		info, err := os.Stat(filepath.Join(output, name))
 		if err != nil {
 			t.Fatal(err)
@@ -466,6 +767,17 @@ func TestRecordStartStopAndSafeClearWorkflow(t *testing.T) {
 		if info.Mode().Perm() != 0o600 {
 			t.Fatalf("%s mode = %o", name, info.Mode().Perm())
 		}
+	}
+	originalMetadata, err := os.ReadFile(filepath.Join(active.SessionDir, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var originalCompleted sessionState
+	if err := json.Unmarshal(originalMetadata, &originalCompleted); err != nil {
+		t.Fatal(err)
+	}
+	if originalCompleted.Status != "completed" || originalCompleted.SessionDir != output {
+		t.Fatalf("stale original Charles metadata: %+v", originalCompleted)
 	}
 	backups, err := filepath.Glob(filepath.Join(root, "home", "httpcapture-sessions", "*-pre-clear", "backup.chls"))
 	if err != nil || len(backups) != 1 {

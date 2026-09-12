@@ -1,38 +1,38 @@
 # HTTP Capture
 
-HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不在手机里实现 MITM 或保存请求内容；Android App 通过按应用 `VpnService`，把所选应用的流量转发到电脑上的 Charles、mitmproxy 或自定义 HTTP Proxy。
+HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不在手机里实现 MITM 或保存请求内容；Android App 通过按应用 `VpnService`，把所选应用的流量转发到电脑上的内嵌 Proxify、Charles、mitmproxy 或自定义 HTTP Proxy。
 
 仓库包含：
 
 - `app`：原生 Kotlin + Compose 控制 App，最低 Android 8.0（API 26）。
 - `debug-trust`：仅供业务 App 的 Debug 构建接入的用户 CA 信任 AAR，最低 API 21。
 - `sample-client`：HTTP/HTTPS 联调样例。
-- `cli`：纯 Go 配对、mitmproxy 进程管理、Charles 录制控制与导出过滤工具。
+- `cli`：纯 Go 单文件工具，内嵌 Proxify，负责配对、代理进程、抓包会话、HAR 导出和 Charles 兼容。
 - `native`：固定版本 tun2proxy 的 Android 构建脚本和安全补丁。
 
 ## 快速开始
 
-1. 安装 `mitmproxy`，给 Linux AMD64 CLI 增加执行权限并启动代理：
+1. 给 Linux AMD64 CLI 增加执行权限并启动内嵌 Proxify，不需要安装 Go、Python 或额外代理程序：
 
    ```bash
    chmod +x cli/bin/httpcapture-linux-amd64
-   ./cli/bin/httpcapture-linux-amd64 proxy mitm start
+   ./cli/bin/httpcapture-linux-amd64 proxy proxify start
    ```
 
-2. 生成 mitmproxy 配对二维码；`--host` 可省略并自动检测局域网 IPv4：
+2. 生成配对二维码；Proxify 是默认引擎，`--host` 可省略并自动检测局域网 IPv4：
 
    ```bash
    ./cli/bin/httpcapture-linux-amd64 pair \
-     --engine mitmproxy \
      --host 192.168.1.10 \
      --out pair.png
    ```
 
 3. 保持 CLI 运行，在 Android App 中扫码；App 会自动下载并校验代理配置和 CA，成功后 CLI 自动退出。
 4. 按提示安装 CA，然后选择一个或多个应用。
-5. 首次点击“开始抓包”确认系统 VPN 权限。以后可直接使用 App 或快捷磁贴启停。
+5. 在电脑执行 `httpcapture record start --package com.example.app`，然后在 APK 中开始抓包。
+6. 完成后执行 `httpcapture record stop`，会话目录包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
 
-继续使用 Charles 时无需由 CLI 启动代理，导出 Charles CA 后执行 `httpcapture pair` 即可；默认引擎和端口仍是 `charles:8888`。
+继续使用 Charles 时无需由 CLI 启动代理，导出 Charles CA 后执行 `httpcapture pair --engine charles`。mitmproxy 作为备用引擎继续保留。
 
 配对二维码只包含有效约 3 分钟的一次性局域网地址和配置包指纹，不包含完整 CA，因此终端显示更小。手机与电脑需要处于可互相访问的局域网；扫码页固定为竖屏。
 
@@ -105,6 +105,7 @@ export HTTPCAPTURE_SIGNING_KEY_PASSWORD='从密码管理器读取'
 - 未接入的第三方 APK：HTTP 尽力转发；HTTPS 是否可解密不作保证。
 - 证书锁定、自带证书库、Cronet 特殊配置等不在首版兼容范围。
 - 多 App 同时抓包时，代理数据不能可靠判断每条请求属于哪个 Android 包；CLI 只保存本次应用集合标签。
-- UDP/QUIC 不是首版目标；HTTPS 客户端通常会回退到 TCP。
+- 当前内嵌 Proxify 会把 HTTP/2 客户端连接降级为 HTTP/1.1；UDP/QUIC 不是当前目标，HTTPS 客户端通常会回退到 TCP。
+- SSE/长响应可能被缓冲，WebSocket 实测不能可靠透传；V0.3 不支持这两类流量。
 
-V0.2 使用配对协议 v3，`engine` 为必填字段。开发阶段不兼容旧二维码或未带 `engine` 的旧配置，升级 APK 与 CLI 后需要重新扫码。
+V0.3 继续使用配对协议 v3，新增 `proxify` 引擎。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
