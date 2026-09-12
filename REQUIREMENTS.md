@@ -116,6 +116,8 @@ httpCapture Android APK
 - VPN 转发核心可以使用成熟的 TUN 到 HTTP Proxy 实现
 - 不使用 Flutter
 - 不要求 root 或日常 ADB 操作
+- Release 分别生成 `armeabi-v7a` 和 `arm64-v8a` 两个独立 APK，不发布 Universal 或 `x86_64` Release APK
+- Debug 构建保留 `x86_64`，用于 Android 模拟器调试
 
 ### 5.2 Android 快捷磁贴
 
@@ -583,6 +585,7 @@ httpcapture-cli record start --clear
 - 使用仓库外的本地签名材料可以生成 Release APK；没有本地签名材料时不应意外使用仓库内的公共正式密钥。
 - CI 日志和公开构建产物不包含签名 Secret、私钥、真实抓包内容或配对数据。
 - 第三方依赖许可证与署名清单已经核对，项目许可证已经确定并随源码发布。
+- Release 构建只产生可发布的 `armeabi-v7a` 和 `arm64-v8a` 两个独立签名 APK；不产生 Universal 或 `x86_64` Release APK。
 
 ## 13. 待确认项
 

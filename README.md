@@ -34,6 +34,13 @@ Android 11 及更高版本禁止普通 App 直接安装 CA。HTTP Capture 会把
 cd cli && go test ./...
 ```
 
+`app` 的 Release 只生成两个独立 APK，不生成 Universal 或 x86_64 Release APK：
+
+- `app-armeabi-v7a-release.apk`
+- `app-arm64-v8a-release.apk`
+
+Debug 仍生成包含 `armeabi-v7a`、`arm64-v8a` 和 `x86_64` 的 Universal APK，保留 Android 模拟器调试能力。
+
 重新构建转发内核需要 Rust、`cargo-ndk` 和 Android NDK：
 
 ```bash

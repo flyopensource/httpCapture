@@ -63,7 +63,34 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86_64")
+            isUniversalApk = true
+        }
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters
+                .firstOrNull {
+                    it.filterType == com.android.build.api.variant.FilterConfiguration.FilterType.ABI
+                }
+                ?.identifier
+            output.enabled.set(
+                if (variant.buildType == "release") {
+                    abi == "armeabi-v7a" || abi == "arm64-v8a"
+                } else {
+                    abi == null
+                },
+            )
+        }
+    }
 }
 
 dependencies {
