@@ -21,6 +21,7 @@ class ConfigStore(context: Context) {
                             port = item.getInt("port"),
                             certificateDerBase64 = item.getString("certificateDer"),
                             certificateSha256 = item.getString("certificateSha256"),
+                            engine = ProxyEngine.fromWire(item.getString("engine")),
                         )
                     )
                 }
@@ -28,6 +29,7 @@ class ConfigStore(context: Context) {
         }.getOrDefault(emptyList())
         val packages = preferences.getStringSet(KEY_PACKAGES, emptySet()).orEmpty().toSet()
         val activeId = preferences.getString(KEY_ACTIVE_PROFILE, null)
+            ?.takeIf { id -> profiles.any { it.id == id } }
         return CaptureSettings(profiles, activeId, packages)
     }
 
@@ -69,6 +71,7 @@ class ConfigStore(context: Context) {
                 put("port", profile.port)
                 put("certificateDer", profile.certificateDerBase64)
                 put("certificateSha256", profile.certificateSha256)
+                put("engine", profile.engine.wireName)
             })
         }
         preferences.edit().putString(KEY_PROFILES, array.toString()).apply()
@@ -90,7 +93,10 @@ internal object ProfileMergePolicy {
         incoming: CaptureProfile,
     ): Result {
         val matches = profiles.filter { existing ->
-            existing.id == incoming.id || existing.name.trim().equals(incoming.name.trim(), ignoreCase = true)
+            existing.id == incoming.id || (
+                existing.engine == incoming.engine &&
+                    existing.name.trim().equals(incoming.name.trim(), ignoreCase = true)
+                )
         }
         val existing = matches.firstOrNull { it.id == activeProfileId }
             ?: matches.firstOrNull { it.id == incoming.id }

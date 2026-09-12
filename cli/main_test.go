@@ -7,14 +7,18 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -23,12 +27,12 @@ import (
 )
 
 func TestEncodePairingReferenceRoundTrip(t *testing.T) {
-	bundle := []byte(`{"v":2,"name":"dev"}`)
+	bundle := []byte(`{"v":3,"engine":"charles","name":"dev"}`)
 	uri, err := encodePairingReference("http://192.168.1.10:43210/p/token", bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const prefix = "httpcapture://p/2/192.168.1.10/43210/token/"
+	const prefix = "httpcapture://p/3/192.168.1.10/43210/token/"
 	if !strings.HasPrefix(uri, prefix) {
 		t.Fatalf("unexpected URI: %s", uri)
 	}
@@ -42,7 +46,7 @@ func TestEncodePairingReferenceRoundTrip(t *testing.T) {
 }
 
 func TestPairingServerDownloadsOnceAndWaitsForAck(t *testing.T) {
-	bundle := []byte(`{"v":2,"name":"dev"}`)
+	bundle := []byte(`{"v":3,"engine":"charles","name":"dev"}`)
 	server, err := startPairingServer("127.0.0.1", 0, bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +89,7 @@ func TestPairingServerDownloadsOnceAndWaitsForAck(t *testing.T) {
 }
 
 func TestPairingServerRejectsAckBeforeDownload(t *testing.T) {
-	server, err := startPairingServer("127.0.0.1", 0, []byte(`{"v":2}`))
+	server, err := startPairingServer("127.0.0.1", 0, []byte(`{"v":3}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +106,7 @@ func TestPairingServerRejectsAckBeforeDownload(t *testing.T) {
 }
 
 func TestCompactTerminalQRCodeDimensions(t *testing.T) {
-	code, err := qrcode.New("httpcapture://p/2/127.0.0.1/39001/token/digest", qrcode.Low)
+	code, err := qrcode.New("httpcapture://p/3/127.0.0.1/39001/token/digest", qrcode.Low)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +123,8 @@ func TestCompactTerminalQRCodeDimensions(t *testing.T) {
 	}
 }
 
-func TestV2PairingQRCodeFitsCommonTerminal(t *testing.T) {
-	bundle := []byte(`{"v":2,"name":"Charles Proxy CA","certificateDer":"AQID"}`)
+func TestV3PairingQRCodeFitsCommonTerminal(t *testing.T) {
+	bundle := []byte(`{"v":3,"engine":"charles","name":"Charles Proxy CA","certificateDer":"AQID"}`)
 	uri, err := encodePairingReference("http://192.168.123.123:54321/p/1234567890123456789012", bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +178,18 @@ func TestValidateTerminalQRMode(t *testing.T) {
 }
 
 func TestReadCertificateRejectsPrivateBundleAndAcceptsCA(t *testing.T) {
+	path, der := writeTestCA(t)
+	got, subject, err := readCertificate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(der) || subject != "HTTP Capture Test CA" {
+		t.Fatalf("unexpected cert result: %q", subject)
+	}
+}
+
+func writeTestCA(t *testing.T) (string, []byte) {
+	t.Helper()
 	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -191,12 +207,160 @@ func TestReadCertificateRejectsPrivateBundleAndAcceptsCA(t *testing.T) {
 	if err := os.WriteFile(path, der, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, subject, err := readCertificate(path)
+	return path, der
+}
+
+func TestProxyEngineDefaultsAndMitmproxyCA(t *testing.T) {
+	if defaultProxyPort(engineCharles) != 8888 || defaultProxyPort(engineCustom) != 8888 {
+		t.Fatal("Charles/custom default port changed")
+	}
+	if defaultProxyPort(engineMitmproxy) != 8080 {
+		t.Fatal("mitmproxy default port must be 8080")
+	}
+	if validProxyEngine("MITMPROXY") || validProxyEngine("unknown") {
+		t.Fatal("engine validation must only accept normalized supported values")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	caPath := filepath.Join(home, ".mitmproxy", "mitmproxy-ca-cert.cer")
+	if err := os.MkdirAll(filepath.Dir(caPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, []byte("ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := findMitmproxyCA(); got != caPath {
+		t.Fatalf("findMitmproxyCA() = %q, want %q", got, caPath)
+	}
+}
+
+func TestPairRejectsExplicitZeroPort(t *testing.T) {
+	err := pairCommand([]string{"--engine", "mitmproxy", "--host", "127.0.0.1", "--port", "0"})
+	if err == nil || !strings.Contains(err.Error(), "1..65535") {
+		t.Fatalf("expected explicit zero port rejection, got %v", err)
+	}
+}
+
+func TestManagedMitmdumpLifecycle(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux-only managed process test")
+	}
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	caPath := filepath.Join(root, "home", ".mitmproxy", "mitmproxy-ca-cert.cer")
+	if err := os.MkdirAll(filepath.Dir(caPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, []byte("test-ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(root, "mitmdump")
+	script := "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile true; do sleep 1; done\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := mitmStart([]string{"--bin", binary, "--host", "127.0.0.1", "--port", "18080"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := readMitmState()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(der) || subject != "HTTP Capture Test CA" {
-		t.Fatalf("unexpected cert result: %q", subject)
+	t.Cleanup(func() {
+		if managedProcessMatches(state.PID, state.StartToken) {
+			_ = terminateManagedProcess(state.PID)
+		}
+	})
+	if !managedProcessMatches(state.PID, state.StartToken) {
+		t.Fatal("managed mitmdump is not running")
+	}
+	info, err := os.Stat(mitmStatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("state mode = %o", info.Mode().Perm())
+	}
+	if err := mitmStatus(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := mitmStop(nil); err != nil {
+		t.Fatal(err)
+	}
+	if managedProcessMatches(state.PID, state.StartToken) {
+		t.Fatal("managed mitmdump is still running")
+	}
+	if _, err := os.Stat(mitmStatePath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state file still exists: %v", err)
+	}
+}
+
+func TestMitmproxyPairingV3EndToEnd(t *testing.T) {
+	certPath, _ := writeTestCA(t)
+	root := t.TempDir()
+	uriPath := filepath.Join(root, "pair.txt")
+	result := make(chan error, 1)
+	go func() {
+		result <- pairCommand([]string{
+			"--engine", "mitmproxy",
+			"--host", "127.0.0.1",
+			"--cert", certPath,
+			"--name", "test-mitm",
+			"--out", filepath.Join(root, "pair.png"),
+			"--uri-out", uriPath,
+			"--terminal-qr", "never",
+			"--timeout", "3s",
+		})
+	}()
+
+	var rawURI []byte
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rawURI, _ = os.ReadFile(uriPath)
+		if len(rawURI) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	endpoint, err := url.Parse(strings.TrimSpace(string(rawURI)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(strings.Trim(endpoint.Path, "/"), "/")
+	if endpoint.Scheme != "httpcapture" || endpoint.Host != "p" || len(parts) != 5 || parts[0] != "3" {
+		t.Fatalf("unexpected pairing URI: %q", rawURI)
+	}
+	downloadURL := "http://" + parts[1] + ":" + parts[2] + "/p/" + parts[3]
+	response, err := http.Get(downloadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload pairing
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if payload.Version != 3 || payload.Engine != engineMitmproxy || payload.Port != 8080 {
+		t.Fatalf("unexpected pairing payload: %+v", payload)
+	}
+	request, _ := http.NewRequest(http.MethodPost, downloadURL, nil)
+	ack, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ack.Body.Close()
+	if ack.StatusCode != http.StatusNoContent {
+		t.Fatalf("ack status = %d", ack.StatusCode)
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pair command did not exit after acknowledgement")
 	}
 }
 

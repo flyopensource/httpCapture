@@ -38,6 +38,7 @@ class ProfileAddressPolicyTest {
             port = 8888,
             certificateDerBase64 = "CERT",
             certificateSha256 = "FINGERPRINT",
+            engine = ProxyEngine.CHARLES,
         )
 
         val updated = ProfileAddressPolicy.update(

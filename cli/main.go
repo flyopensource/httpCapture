@@ -25,10 +25,17 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
+
+const (
+	engineCharles   = "charles"
+	engineMitmproxy = "mitmproxy"
+	engineCustom    = "custom"
+)
 
 type pairing struct {
 	Version           int    `json:"v"`
+	Engine            string `json:"engine"`
 	Name              string `json:"name"`
 	Host              string `json:"host"`
 	Port              int    `json:"port"`
@@ -52,6 +59,8 @@ func main() {
 	switch os.Args[1] {
 	case "pair":
 		err = pairCommand(os.Args[2:])
+	case "proxy":
+		err = proxyCommand(os.Args[2:])
 	case "charles":
 		err = charlesCommand(os.Args[2:])
 	case "record":
@@ -73,10 +82,13 @@ func main() {
 }
 
 func usage() {
-	fmt.Print(`httpcapture - Android + Charles 抓包助手
+	fmt.Print(`httpcapture - Android 抓包代理接入工具
 
 用法:
-  httpcapture pair [--host IP] [--port 8888] [--cert FILE] [--name NAME] [--out pair.png] [--serve-port 0] [--timeout 3m] [--terminal-qr auto|always|never]
+  httpcapture pair [--engine charles|mitmproxy|custom] [--host IP] [--port PORT] [--cert FILE] [--name NAME] [--out pair.png] [--serve-port 0] [--timeout 3m] [--terminal-qr auto|always|never]
+  httpcapture proxy mitm start [--host 0.0.0.0] [--port 8080] [--bin mitmdump]
+  httpcapture proxy mitm stop
+  httpcapture proxy mitm status
   httpcapture charles status [--proxy 127.0.0.1:8888]
   httpcapture record start [--app PACKAGE ...] [--client-ip IP] [--clear]
   httpcapture record stop [--out DIR] [--formats chls,xml,json,har]
@@ -95,12 +107,36 @@ func (r *repeated) Set(value string) error {
 	return nil
 }
 
+type optionalPort struct {
+	value int
+	set   bool
+}
+
+func (p *optionalPort) String() string {
+	if !p.set {
+		return ""
+	}
+	return strconv.Itoa(p.value)
+}
+
+func (p *optionalPort) Set(value string) error {
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return errors.New("端口必须是整数")
+	}
+	p.value = parsed
+	p.set = true
+	return nil
+}
+
 func pairCommand(args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
+	engine := fs.String("engine", engineCharles, "代理引擎：charles、mitmproxy 或 custom")
 	host := fs.String("host", "", "手机能访问的电脑 IP")
-	port := fs.Int("port", 8888, "Charles HTTP proxy 端口")
-	certPath := fs.String("cert", "", "Charles CA 证书（DER 或 PEM）")
-	name := fs.String("name", "", "此 Charles 配置名称")
+	var port optionalPort
+	fs.Var(&port, "port", "HTTP proxy 端口；Charles 默认 8888，mitmproxy 默认 8080")
+	certPath := fs.String("cert", "", "代理 CA 证书（DER 或 PEM）")
+	name := fs.String("name", "", "此代理配置名称")
 	out := fs.String("out", "httpcapture-pair.png", "二维码 PNG 路径")
 	uriOut := fs.String("uri-out", "", "可选：同时写出配对 URI，便于模拟器自动化")
 	terminalQR := fs.String("terminal-qr", "auto", "终端二维码显示方式：auto、always 或 never")
@@ -108,6 +144,16 @@ func pairCommand(args []string) error {
 	timeout := fs.Duration("timeout", 3*time.Minute, "临时配对服务有效时间")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("pair 不接受位置参数")
+	}
+	*engine = strings.ToLower(strings.TrimSpace(*engine))
+	if !validProxyEngine(*engine) {
+		return errors.New("--engine 仅支持 charles、mitmproxy 或 custom")
+	}
+	if !port.set {
+		port.value = defaultProxyPort(*engine)
 	}
 	if err := validateTerminalQRMode(*terminalQR); err != nil {
 		return err
@@ -118,7 +164,7 @@ func pairCommand(args []string) error {
 	if *host == "" {
 		return errors.New("无法自动确定局域网 IP，请使用 --host")
 	}
-	if *port < 1 || *port > 65535 {
+	if port.value < 1 || port.value > 65535 {
 		return errors.New("--port 必须是 1..65535")
 	}
 	if *servePort < 0 || *servePort > 65535 {
@@ -128,10 +174,16 @@ func pairCommand(args []string) error {
 		return errors.New("--timeout 必须大于 0")
 	}
 	if *certPath == "" {
-		*certPath = findCharlesCA()
+		*certPath = findProxyCA(*engine)
 	}
 	if *certPath == "" {
-		return errors.New("未找到 Charles CA，请先从 Charles 导出并使用 --cert 指定；不接受 .p12/.pfx")
+		if *engine == engineMitmproxy {
+			return errors.New("未找到 mitmproxy CA；请先运行 `httpcapture proxy mitm start` 生成证书，或使用 --cert 指定 ~/.mitmproxy/mitmproxy-ca-cert.cer")
+		}
+		if *engine == engineCharles {
+			return errors.New("未找到 Charles CA，请先从 Charles 导出并使用 --cert 指定；不接受 .p12/.pfx")
+		}
+		return errors.New("custom 代理必须使用 --cert 指定 DER/PEM CA 证书")
 	}
 	ext := strings.ToLower(filepath.Ext(*certPath))
 	if ext == ".p12" || ext == ".pfx" {
@@ -144,18 +196,18 @@ func pairCommand(args []string) error {
 	if *name == "" {
 		*name = subject
 		if *name == "" {
-			*name = net.JoinHostPort(*host, strconv.Itoa(*port))
+			*name = net.JoinHostPort(*host, strconv.Itoa(port.value))
 		}
 	}
 	if certificate, parseErr := x509.ParseCertificate(der); parseErr == nil {
 		now := time.Now()
 		if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
-			fmt.Fprintf(os.Stderr, "警告: Charles CA 当前无效（有效期 %s 至 %s），HTTP 仍可转发，但 HTTPS 解密会失败；请在 Charles 中重新生成 CA 后再次配对。\n", certificate.NotBefore.Format(time.RFC3339), certificate.NotAfter.Format(time.RFC3339))
+			fmt.Fprintf(os.Stderr, "警告: %s CA 当前无效（有效期 %s 至 %s），HTTP 仍可转发，但 HTTPS 解密会失败；请更新代理 CA 后再次配对。\n", *engine, certificate.NotBefore.Format(time.RFC3339), certificate.NotAfter.Format(time.RFC3339))
 		}
 	}
 	digest := sha256.Sum256(der)
 	payload := pairing{
-		Version: 2, Name: *name, Host: *host, Port: *port,
+		Version: 3, Engine: *engine, Name: *name, Host: *host, Port: port.value,
 		CertificateDER:    base64.StdEncoding.EncodeToString(der),
 		CertificateSHA256: strings.ToUpper(hex.EncodeToString(digest[:])),
 	}
@@ -184,7 +236,7 @@ func pairCommand(args []string) error {
 			return fmt.Errorf("写入配对 URI: %w", err)
 		}
 	}
-	fmt.Printf("配置: %s\n代理: %s\nCA SHA-256: %s\n二维码: %s\n", *name, net.JoinHostPort(*host, strconv.Itoa(*port)), payload.CertificateSHA256, *out)
+	fmt.Printf("配置: %s\n类型: %s\n代理: %s\nCA SHA-256: %s\n二维码: %s\n", *name, *engine, net.JoinHostPort(*host, strconv.Itoa(port.value)), payload.CertificateSHA256, *out)
 	fmt.Printf("临时服务: %s（%s 后失效）\n", server.URL(), timeout.String())
 	fmt.Println()
 	if err := printTerminalQRCode(os.Stdout, code, *terminalQR); err != nil {
@@ -210,7 +262,7 @@ func encodePairingReference(downloadURL string, bundle []byte) (string, error) {
 	}
 	digest := sha256.Sum256(bundle)
 	return fmt.Sprintf(
-		"httpcapture://p/2/%s/%s/%s/%s",
+		"httpcapture://p/3/%s/%s/%s/%s",
 		endpoint.Hostname(), port, token, base64.RawURLEncoding.EncodeToString(digest[:]),
 	), nil
 }
@@ -276,6 +328,39 @@ func findCharlesCA() string {
 		candidates = append(candidates, filepath.Join(home, "Library", "Application Support", "Charles", "ca", "charles-proxy-ssl-proxying-certificate.cer"))
 	}
 	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func validProxyEngine(engine string) bool {
+	return engine == engineCharles || engine == engineMitmproxy || engine == engineCustom
+}
+
+func defaultProxyPort(engine string) int {
+	if engine == engineMitmproxy {
+		return 8080
+	}
+	return 8888
+}
+
+func findProxyCA(engine string) string {
+	switch engine {
+	case engineCharles:
+		return findCharlesCA()
+	case engineMitmproxy:
+		return findMitmproxyCA()
+	default:
+		return ""
+	}
+}
+
+func findMitmproxyCA() string {
+	home, _ := os.UserHomeDir()
+	for _, name := range []string{"mitmproxy-ca-cert.cer", "mitmproxy-ca-cert.pem"} {
+		candidate := filepath.Join(home, ".mitmproxy", name)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}

@@ -144,14 +144,14 @@ class MainActivity : ComponentActivity() {
 
     private fun importPairing(raw: String) {
         if (pairingImportRunning) {
-            messageState = "正在导入 Charles 配置，请稍候"
+            messageState = "正在导入代理配置，请稍候"
             return
         }
         pairingImportRunning = true
         lifecycleScope.launch {
             runCatching {
                 val reference = PairingCodec.decodeReference(raw)
-                messageState = "正在从电脑获取 Charles 配置…"
+                messageState = "正在从电脑获取代理配置…"
                 val profile = withContext(Dispatchers.IO) { PairingClient.download(reference) }
                 CertificateUtils.validate(profile)
                 store.upsertProfile(profile)
@@ -179,7 +179,7 @@ class MainActivity : ComponentActivity() {
     private fun requestStart() {
         val settings = store.load()
         if (settings.activeProfileId == null) {
-            messageState = "请先扫码导入 Charles 配置"
+            messageState = "请先扫码导入代理配置"
             return
         }
         if (settings.selectedPackages.isEmpty()) {
@@ -205,8 +205,8 @@ class MainActivity : ComponentActivity() {
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val fileName = CertificateUtils.exportToDownloads(this, profile)
-                messageState = "证书已保存到 Downloads/HTTP Capture/$fileName。请在安全设置中选择“安装 CA 证书”，再选择该文件。"
-                Toast.makeText(this, "证书已保存。请选择“安装 CA 证书”并打开 $fileName", Toast.LENGTH_LONG).show()
+                messageState = "${profile.name} 的 CA 已保存到 Downloads/HTTP Capture/$fileName。请在安全设置中选择“安装 CA 证书”，再选择该文件。"
+                Toast.makeText(this, "${profile.name} 的 CA 已保存。请选择“安装 CA 证书”并打开 $fileName", Toast.LENGTH_LONG).show()
                 startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
             } else {
                 certificateInstaller.launch(CertificateUtils.installIntent(profile))
@@ -253,16 +253,21 @@ class MainActivity : ComponentActivity() {
                     item {
                         Spacer(Modifier.height(12.dp))
                         Text("HTTP Capture", style = MaterialTheme.typography.headlineMedium)
-                        Text("把指定应用的流量一键转发到 Charles", color = Color(0xFF475569))
+                        Text("把指定应用的流量一键转发到电脑代理", color = Color(0xFF475569))
                     }
                     item {
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Text("1. Charles 配置", style = MaterialTheme.typography.titleMedium)
+                                Text("1. 代理配置", style = MaterialTheme.typography.titleMedium)
                                 if (active == null) {
                                     Text("尚未导入配置", color = Color(0xFFB45309))
                                 } else {
-                                    Text("${active.name}  ·  ${active.host}:${active.port}")
+                                    Text("${active.name}  ·  ${active.engine.displayName}")
+                                    Text("地址：${active.host}:${active.port}", style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        "CA SHA-256：${active.certificateSha256.chunked(2).joinToString(":")}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
                                     val installed = remember(active, settingsState) { CertificateUtils.isInstalled(this@MainActivity, active) }
                                     val validityProblem = remember(active) { CertificateUtils.validityProblem(active) }
                                     Text(
@@ -276,7 +281,7 @@ class MainActivity : ComponentActivity() {
                                         if (!installed) Button(onClick = { installCertificate(active) }) { Text("安装 CA") }
                                         OutlinedButton(onClick = {
                                             if (runningState) {
-                                                messageState = "请先停止抓包，再修改 Charles IP 和端口"
+                                                messageState = "请先停止抓包，再修改代理 IP 和端口"
                                             } else {
                                                 editingProfile = active
                                             }
@@ -285,7 +290,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 if (settingsState.profiles.size > 1) {
-                                    Text("已保存的 Charles")
+                                    Text("已保存的代理配置")
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         settingsState.profiles.take(3).forEach { profile ->
                                             FilterChip(
@@ -330,7 +335,7 @@ class MainActivity : ComponentActivity() {
                         OutlinedButton(onClick = ::requestTile, modifier = Modifier.fillMaxWidth()) {
                             Text(if (Build.VERSION.SDK_INT >= 33) "添加快捷磁贴" else "在系统快捷设置中添加“抓包开关”")
                         }
-                        Text("快捷磁贴会复用当前 Charles 和应用选择。未配置或未授权时会打开本页。", style = MaterialTheme.typography.bodySmall)
+                        Text("快捷磁贴会复用当前代理配置和应用选择。未配置或未授权时会打开本页。", style = MaterialTheme.typography.bodySmall)
                     }
                     messageState?.let { message ->
                         item {
@@ -479,7 +484,7 @@ class MainActivity : ComponentActivity() {
         val validation = remember(host, port) { runCatching { ProfileAddressPolicy.parse(host, port) } }
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("修改 Charles 地址") },
+            title = { Text("修改代理地址") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(profile.name, style = MaterialTheme.typography.titleSmall)
@@ -493,7 +498,7 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(
                         value = port,
                         onValueChange = { port = it.filter(Char::isDigit).take(5) },
-                        label = { Text("Charles 端口") },
+                        label = { Text("代理端口") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )

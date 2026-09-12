@@ -1,32 +1,38 @@
 # HTTP Capture
 
-HTTP Capture 是面向日常 Android 开发的 Charles 抓包助手。它不替代 Charles，也不在手机里保存请求内容；Android App 通过按应用 `VpnService` 把所选应用的流量转发到电脑上的 Charles。
+HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不在手机里实现 MITM 或保存请求内容；Android App 通过按应用 `VpnService`，把所选应用的流量转发到电脑上的 Charles、mitmproxy 或自定义 HTTP Proxy。
 
 仓库包含：
 
 - `app`：原生 Kotlin + Compose 控制 App，最低 Android 8.0（API 26）。
 - `debug-trust`：仅供业务 App 的 Debug 构建接入的用户 CA 信任 AAR，最低 API 21。
 - `sample-client`：HTTP/HTTPS 联调样例。
-- `cli`：纯 Go 配对、Charles 录制控制与导出过滤工具。
+- `cli`：纯 Go 配对、mitmproxy 进程管理、Charles 录制控制与导出过滤工具。
 - `native`：固定版本 tun2proxy 的 Android 构建脚本和安全补丁。
 
 ## 快速开始
 
-1. 在 Charles 开启 Proxy，并确认端口（默认 `8888`）。
-2. 导出 Charles CA 公钥证书，或使用 Charles 默认 CA 文件。
-3. 给 Linux AMD64 CLI 增加执行权限并生成二维码：
+1. 安装 `mitmproxy`，给 Linux AMD64 CLI 增加执行权限并启动代理：
 
    ```bash
    chmod +x cli/bin/httpcapture-linux-amd64
+   ./cli/bin/httpcapture-linux-amd64 proxy mitm start
+   ```
+
+2. 生成 mitmproxy 配对二维码；`--host` 可省略并自动检测局域网 IPv4：
+
+   ```bash
    ./cli/bin/httpcapture-linux-amd64 pair \
+     --engine mitmproxy \
      --host 192.168.1.10 \
-     --port 8888 \
      --out pair.png
    ```
 
-4. 保持 CLI 运行，在 Android App 中扫码；App 会自动从电脑下载并校验配置和 CA，成功后 CLI 自动退出。
-5. 按提示安装 CA，然后选择一个或多个应用。
-6. 首次点击“开始抓包”确认系统 VPN 权限。以后可直接使用 App 或快捷磁贴启停。
+3. 保持 CLI 运行，在 Android App 中扫码；App 会自动下载并校验代理配置和 CA，成功后 CLI 自动退出。
+4. 按提示安装 CA，然后选择一个或多个应用。
+5. 首次点击“开始抓包”确认系统 VPN 权限。以后可直接使用 App 或快捷磁贴启停。
+
+继续使用 Charles 时无需由 CLI 启动代理，导出 Charles CA 后执行 `httpcapture pair` 即可；默认引擎和端口仍是 `charles:8888`。
 
 配对二维码只包含有效约 3 分钟的一次性局域网地址和配置包指纹，不包含完整 CA，因此终端显示更小。手机与电脑需要处于可互相访问的局域网；扫码页固定为竖屏。
 
@@ -91,14 +97,14 @@ export HTTPCAPTURE_SIGNING_KEY_PASSWORD='从密码管理器读取'
 
 提交前还应检查待提交文件和 Git 历史。`.gitignore` 不能保护已经提交过的密钥；一旦密钥进入历史，应立即停止使用并轮换，而不是只删除当前文件。
 
-Charles 会话、真实 CA、配对二维码和导出数据也属于本地开发产物，不应进入公开仓库。完整约束见 [REQUIREMENTS.md](REQUIREMENTS.md#11-开源与构建签名要求)。
+代理会话、真实 CA、配对二维码和导出数据也属于本地开发产物，不应进入公开仓库。
 
 ## 能力边界
 
-- 接入 `debug-trust` 的 Debug APK：安装有效 Charles CA 后，可抓遵循 Android 系统信任策略的 HTTPS。
+- 接入 `debug-trust` 的 Debug APK：安装当前代理的有效 CA 后，可抓遵循 Android 系统信任策略的 HTTPS。
 - 未接入的第三方 APK：HTTP 尽力转发；HTTPS 是否可解密不作保证。
 - 证书锁定、自带证书库、Cronet 特殊配置等不在首版兼容范围。
-- 多 App 同时抓包时，Charles 导出数据不能可靠判断每条请求属于哪个 Android 包；CLI 只保存本次应用集合标签。
+- 多 App 同时抓包时，代理数据不能可靠判断每条请求属于哪个 Android 包；CLI 只保存本次应用集合标签。
 - UDP/QUIC 不是首版目标；HTTPS 客户端通常会回退到 TCP。
 
-完整产品约束见 [REQUIREMENTS.md](REQUIREMENTS.md)。
+V0.2 使用配对协议 v3，`engine` 为必填字段。开发阶段不兼容旧二维码或未带 `engine` 的旧配置，升级 APK 与 CLI 后需要重新扫码。

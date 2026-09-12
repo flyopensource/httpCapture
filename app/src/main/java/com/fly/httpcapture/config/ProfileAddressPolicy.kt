@@ -22,7 +22,7 @@ object ProfileAddressPolicy {
     }
 
     fun update(profiles: List<CaptureProfile>, profileId: String, address: ProfileAddress): List<CaptureProfile> {
-        require(profiles.any { it.id == profileId }) { "Charles 配置不存在" }
+        require(profiles.any { it.id == profileId }) { "代理配置不存在" }
         return profiles.map { profile ->
             if (profile.id == profileId) profile.copy(host = address.host, port = address.port) else profile
         }

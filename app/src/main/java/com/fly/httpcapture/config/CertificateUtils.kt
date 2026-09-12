@@ -38,7 +38,7 @@ object CertificateUtils {
     fun exportToDownloads(context: Context, profile: CaptureProfile): String {
         validate(profile)
         require(android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-        val safeName = profile.name.replace(Regex("[^A-Za-z0-9._-]"), "_").take(40).ifBlank { "charles" }
+        val safeName = profile.name.replace(Regex("[^A-Za-z0-9._-]"), "_").take(40).ifBlank { "proxy" }
         val fileName = "httpcapture-$safeName-${profile.certificateSha256.take(8)}.crt"
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -76,7 +76,7 @@ object CertificateUtils {
         val now = java.util.Date()
         when {
             now.before(certificate.notBefore) -> "CA 尚未生效"
-            now.after(certificate.notAfter) -> "CA 已过期，请在 Charles 重新生成并再次扫码"
+            now.after(certificate.notAfter) -> "CA 已过期，请更新 ${profile.name} 的 CA 后再次扫码"
             else -> null
         }
     }.getOrElse { "CA 无效：${it.message}" }

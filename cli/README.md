@@ -1,6 +1,6 @@
 # httpcapture CLI
 
-纯 Go、无 CGO 的桌面工具。首版只发布 Linux AMD64 单文件版本。
+纯 Go、无 CGO 的桌面工具。当前只发布 Linux AMD64 单文件版本。
 
 ## 安装
 
@@ -12,6 +12,24 @@ httpcapture version
 
 不希望安装到系统目录时，也可以直接执行 `./httpcapture-linux-amd64`。
 
+## 管理 mitmproxy
+
+CLI 不内置 mitmproxy。先在系统中安装可执行文件 `mitmdump`，再运行：
+
+```bash
+httpcapture proxy mitm start
+httpcapture proxy mitm status
+httpcapture proxy mitm stop
+```
+
+默认监听 `0.0.0.0:8080`。也可指定监听地址、端口或二进制路径：
+
+```bash
+httpcapture proxy mitm start --host 0.0.0.0 --port 8080 --bin /usr/local/bin/mitmdump
+```
+
+CLI 将状态和 `mitmdump.log` 保存在当前用户配置目录，文件权限为 `0600`。状态记录包含 PID 和 Linux 进程启动标识；`stop` 只会停止由 httpcapture 启动且标识一致的进程，不会按名称批量结束用户自行启动的 mitmproxy。
+
 ## 配对
 
 最简用法：
@@ -20,7 +38,7 @@ httpcapture version
 httpcapture pair
 ```
 
-CLI 会自动选择一个局域网 IPv4、使用 Charles 默认代理端口 `8888`，并尝试读取 Linux 默认 CA 文件：
+不指定 `--engine` 时保持 Charles 用法：CLI 自动选择局域网 IPv4、使用端口 `8888`，并查找：
 
 - `~/.charles/ca/charles-proxy-ssl-proxying-certificate.cer`
 - `~/.charles/ca/charles-proxy-ssl-proxying-certificate.pem`
@@ -38,11 +56,22 @@ httpcapture pair \
 
 只接受 DER/PEM X.509 CA 公钥证书，拒绝可能包含私钥的 `.p12/.pfx`。
 
+mitmproxy 用法：
+
+```bash
+httpcapture proxy mitm start
+httpcapture pair --engine mitmproxy --host 192.168.1.10
+```
+
+mitmproxy 默认端口为 `8080`，默认 CA 为 `~/.mitmproxy/mitmproxy-ca-cert.cer`，也会尝试 `.pem`。如果 CA 尚不存在，先启动一次 `mitmdump` 让它生成证书。
+
+自定义 HTTP Proxy 使用 `--engine custom`，并且必须显式提供 `--cert`。
+
 ### 配对过程
 
 1. CLI 读取 CA，启动一次性局域网 HTTP 服务并显示短二维码。
 2. 保持 CLI 运行，在 HTTP Capture APK 中点击“扫码导入”。
-3. APK 自动下载、校验并保存 Charles IP、端口和 CA；用户不需要打开浏览器或手动下载证书。
+3. APK 自动下载、校验并保存代理类型、IP、端口和 CA；用户不需要打开浏览器或手动下载证书。
 4. APK 回传成功确认后，CLI 显示“手机已确认导入，临时服务已关闭”并自动退出。
 
 `pair` 在二维码生成后继续运行不是卡住。默认等待时间为 3 分钟；超时、按 `Ctrl+C` 或 CLI 进程退出后，二维码立即失效。每个二维码只允许下载一次，失败后应重新执行 `pair`。
@@ -53,9 +82,10 @@ httpcapture pair \
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--host` | 自动检测 | 手机可以访问的本机 IPv4；同时作为 Charles 地址和临时服务监听地址 |
-| `--port` | `8888` | Charles HTTP Proxy 端口 |
-| `--cert` | 自动查找 | Charles CA 公钥证书路径，只支持 DER/PEM |
+| `--engine` | `charles` | `charles`、`mitmproxy` 或 `custom` |
+| `--host` | 自动检测 | 手机可以访问的本机 IPv4；同时作为代理地址和临时服务监听地址 |
+| `--port` | 按引擎 | Charles/custom 为 `8888`，mitmproxy 为 `8080` |
+| `--cert` | 按引擎查找 | Charles 或 mitmproxy CA；custom 必须指定，只支持 DER/PEM |
 | `--name` | CA 名称 | APK 中显示的电脑配置名称 |
 | `--out` | `httpcapture-pair.png` | 二维码 PNG 输出路径 |
 | `--serve-port` | `0` | 临时服务端口；`0` 表示自动选择空闲端口 |
@@ -76,6 +106,8 @@ httpcapture pair --host 192.168.1.10 --serve-port 39001
 - APK 提示无法连接：确认手机和电脑在同一可互访网络，并检查防火墙或访客 Wi-Fi 隔离。
 - APK 提示配置校验失败：二维码对应的会话已不可用，应重新运行 `pair` 并扫码。
 - CLI 提示二维码过期：APK 未在超时前确认导入，重新运行即可。
+
+V0.2 使用配对协议 v3，`engine` 是必填字段。开发阶段不兼容 V0.1 二维码和旧 APK，本机已有旧配置时请使用 V0.2 APK 重新扫码。
 
 ### 构建 Linux AMD64
 

@@ -47,7 +47,7 @@ class HttpCaptureVpnService : VpnService() {
         val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
         if (profile == null || settings.selectedPackages.isEmpty()) {
             Log.e(TAG, "Missing profile or packages")
-            VpnState.update(this, false, "请先导入 Charles 配置并选择应用")
+            VpnState.update(this, false, "请先导入代理配置并选择应用")
             starting = false
             stopSelf()
             return
@@ -56,8 +56,8 @@ class HttpCaptureVpnService : VpnService() {
             Socket().use { it.connect(InetSocketAddress(profile.host, profile.port), 1_500) }
         }.isSuccess
         if (!reachable) {
-            Log.e(TAG, "Charles is unreachable at ${profile.host}:${profile.port}")
-            VpnState.update(this, false, "无法连接 Charles：${profile.host}:${profile.port}")
+            Log.e(TAG, "Proxy is unreachable at ${profile.host}:${profile.port}")
+            VpnState.update(this, false, "无法连接代理：${profile.host}:${profile.port}")
             starting = false
             stopSelf()
             return
@@ -147,7 +147,7 @@ class HttpCaptureVpnService : VpnService() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_capture)
             .setContentTitle("HTTP Capture 正在启动")
-            .setContentText("正在检查 Charles 并建立按应用 VPN")
+            .setContentText("正在检查代理并建立按应用 VPN")
             .setOngoing(true)
             .setContentIntent(PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), pendingFlags()))
             .build()

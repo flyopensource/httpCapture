@@ -40,6 +40,17 @@ class ProfileMergePolicyTest {
     }
 
     @Test
+    fun sameNameFromDifferentEnginesRemainsSeparate() {
+        val charles = profile(id = "charles-id", name = "Development")
+        val mitmproxy = profile(id = "mitm-id", name = "Development", engine = ProxyEngine.MITMPROXY)
+
+        val result = ProfileMergePolicy.upsert(listOf(charles), charles.id, mitmproxy)
+
+        assertEquals(listOf(charles, mitmproxy), result.profiles)
+        assertEquals("mitm-id", result.activeProfileId)
+    }
+
+    @Test
     fun duplicateSameNamedProfilesAreCollapsedUsingActiveId() {
         val expired = profile(id = "expired-id", name = "Charles Emulator", fingerprint = "OLD")
         val active = profile(id = "active-id", name = "Charles Emulator", fingerprint = "CURRENT")
@@ -57,6 +68,7 @@ class ProfileMergePolicyTest {
         host: String = "10.0.2.2",
         port: Int = 8888,
         fingerprint: String = "FINGERPRINT",
+        engine: ProxyEngine = ProxyEngine.CHARLES,
     ) = CaptureProfile(
         id = id,
         name = name,
@@ -64,5 +76,6 @@ class ProfileMergePolicyTest {
         port = port,
         certificateDerBase64 = "CERT",
         certificateSha256 = fingerprint,
+        engine = engine,
     )
 }
