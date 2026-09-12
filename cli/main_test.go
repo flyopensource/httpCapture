@@ -3,11 +3,12 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/xml"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -21,32 +22,87 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-func TestEncodePairingRoundTrip(t *testing.T) {
-	input := pairing{Version: 1, Name: "dev", Host: "10.0.2.2", Port: 8888, CertificateDER: "AQID", CertificateSHA256: strings.Repeat("A", 64)}
-	uri, err := encodePairing(input)
+func TestEncodePairingReferenceRoundTrip(t *testing.T) {
+	bundle := []byte(`{"v":2,"name":"dev"}`)
+	uri, err := encodePairingReference("http://192.168.1.10:43210/p/token", bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const prefix = "httpcapture://pair/v1/"
+	const prefix = "httpcapture://p/2/192.168.1.10/43210/token/"
 	if !strings.HasPrefix(uri, prefix) {
 		t.Fatalf("unexpected URI: %s", uri)
 	}
-	compressed, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(uri, prefix))
+	digest, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(uri, prefix))
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded := gunzipForTest(t, compressed)
-	var output pairing
-	if err := json.Unmarshal(decoded, &output); err != nil {
+	if len(digest) != sha256.Size {
+		t.Fatalf("digest length = %d", len(digest))
+	}
+}
+
+func TestPairingServerDownloadsOnceAndWaitsForAck(t *testing.T) {
+	bundle := []byte(`{"v":2,"name":"dev"}`)
+	server, err := startPairingServer("127.0.0.1", 0, bundle)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if output != input {
-		t.Fatalf("round trip mismatch: %#v", output)
+	defer server.Close()
+
+	response, err := http.Get(server.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || string(content) != string(bundle) {
+		t.Fatalf("unexpected download: status=%d body=%q err=%v", response.StatusCode, content, readErr)
+	}
+	second, err := http.Get(server.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = second.Body.Close()
+	if second.StatusCode != http.StatusGone {
+		t.Fatalf("second download status = %d", second.StatusCode)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, server.URL(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ack.Body.Close()
+	if ack.StatusCode != http.StatusNoContent {
+		t.Fatalf("ack status = %d", ack.StatusCode)
+	}
+	if err := server.Wait(time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPairingServerRejectsAckBeforeDownload(t *testing.T) {
+	server, err := startPairingServer("127.0.0.1", 0, []byte(`{"v":2}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodPost, server.URL(), nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d", response.StatusCode)
 	}
 }
 
 func TestCompactTerminalQRCodeDimensions(t *testing.T) {
-	code, err := qrcode.New("httpcapture://pair/v1/test", qrcode.Medium)
+	code, err := qrcode.New("httpcapture://p/2/127.0.0.1/39001/token/digest", qrcode.Low)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +116,22 @@ func TestCompactTerminalQRCodeDimensions(t *testing.T) {
 	}
 	if !strings.ContainsAny(text, "▀▄█") {
 		t.Fatal("compact QR did not use half-block characters")
+	}
+}
+
+func TestV2PairingQRCodeFitsCommonTerminal(t *testing.T) {
+	bundle := []byte(`{"v":2,"name":"Charles Proxy CA","certificateDer":"AQID"}`)
+	uri, err := encodePairingReference("http://192.168.123.123:54321/p/1234567890123456789012", bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := qrcode.New(uri, qrcode.Low)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, columns, rows := compactTerminalQRCode(code)
+	if columns >= 80 || rows >= 24 {
+		t.Fatalf("QR requires %dx%d terminal cells", columns, rows)
 	}
 }
 

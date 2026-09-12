@@ -58,11 +58,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.fly.httpcapture.config.CaptureProfile
 import com.fly.httpcapture.config.CaptureSettings
 import com.fly.httpcapture.config.CertificateUtils
 import com.fly.httpcapture.config.ConfigStore
 import com.fly.httpcapture.config.PairingCodec
+import com.fly.httpcapture.config.PairingClient
 import com.fly.httpcapture.config.ProfileAddress
 import com.fly.httpcapture.config.ProfileAddressPolicy
 import com.fly.httpcapture.tile.CaptureTileService
@@ -76,6 +78,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -83,6 +86,7 @@ class MainActivity : ComponentActivity() {
     private var settingsState by mutableStateOf(CaptureSettings())
     private var messageState by mutableStateOf<String?>(null)
     private var runningState by mutableStateOf(false)
+    private var pairingImportRunning = false
 
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (it.resultCode == RESULT_OK) startVpn() else messageState = "未获得系统 VPN 授权"
@@ -139,17 +143,37 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun importPairing(raw: String) {
-        runCatching {
-            val profile = PairingCodec.decode(raw)
-            CertificateUtils.validate(profile)
-            store.upsertProfile(profile)
-            reload()
-            messageState = if (CertificateUtils.isInstalled(this, profile)) {
-                "已更新 ${profile.name}；CA 已安装"
-            } else {
-                "已导入 ${profile.name}；请继续安装 CA 证书"
+        if (pairingImportRunning) {
+            messageState = "正在导入 Charles 配置，请稍候"
+            return
+        }
+        pairingImportRunning = true
+        lifecycleScope.launch {
+            runCatching {
+                val reference = PairingCodec.decodeReference(raw)
+                messageState = "正在从电脑获取 Charles 配置…"
+                val profile = withContext(Dispatchers.IO) { PairingClient.download(reference) }
+                CertificateUtils.validate(profile)
+                store.upsertProfile(profile)
+                reload()
+                val ackError = withContext(Dispatchers.IO) {
+                    runCatching { PairingClient.acknowledge(reference) }.exceptionOrNull()
+                }
+                val installState = if (CertificateUtils.isInstalled(this@MainActivity, profile)) {
+                    "CA 已安装"
+                } else {
+                    "请继续安装 CA 证书"
+                }
+                messageState = if (ackError == null) {
+                    "已导入 ${profile.name}；$installState"
+                } else {
+                    "已导入 ${profile.name}；$installState。电脑端确认失败，可手动关闭 CLI"
+                }
+            }.onFailure {
+                messageState = "导入失败：${it.message}。请确认手机和电脑在同一局域网，且 CLI 仍在运行"
             }
-        }.onFailure { messageState = "导入失败：${it.message}" }
+            pairingImportRunning = false
+        }
     }
 
     private fun requestStart() {
@@ -196,6 +220,8 @@ class MainActivity : ComponentActivity() {
             ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                 .setPrompt("扫描 httpcapture CLI 生成的二维码")
                 .setBeepEnabled(false)
+                .setCaptureActivity(PortraitCaptureActivity::class.java)
+                .setOrientationLocked(true)
         )
     }
 

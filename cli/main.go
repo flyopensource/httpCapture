@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -77,7 +76,7 @@ func usage() {
 	fmt.Print(`httpcapture - Android + Charles 抓包助手
 
 用法:
-  httpcapture pair [--host IP] [--port 8888] [--cert FILE] [--name NAME] [--out pair.png] [--terminal-qr auto|always|never]
+  httpcapture pair [--host IP] [--port 8888] [--cert FILE] [--name NAME] [--out pair.png] [--serve-port 0] [--timeout 3m] [--terminal-qr auto|always|never]
   httpcapture charles status [--proxy 127.0.0.1:8888]
   httpcapture record start [--app PACKAGE ...] [--client-ip IP] [--clear]
   httpcapture record stop [--out DIR] [--formats chls,xml,json,har]
@@ -105,6 +104,8 @@ func pairCommand(args []string) error {
 	out := fs.String("out", "httpcapture-pair.png", "二维码 PNG 路径")
 	uriOut := fs.String("uri-out", "", "可选：同时写出配对 URI，便于模拟器自动化")
 	terminalQR := fs.String("terminal-qr", "auto", "终端二维码显示方式：auto、always 或 never")
+	servePort := fs.Int("serve-port", 0, "临时配对服务端口，0 表示自动选择")
+	timeout := fs.Duration("timeout", 3*time.Minute, "临时配对服务有效时间")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -119,6 +120,12 @@ func pairCommand(args []string) error {
 	}
 	if *port < 1 || *port > 65535 {
 		return errors.New("--port 必须是 1..65535")
+	}
+	if *servePort < 0 || *servePort > 65535 {
+		return errors.New("--serve-port 必须是 0..65535")
+	}
+	if *timeout <= 0 {
+		return errors.New("--timeout 必须大于 0")
 	}
 	if *certPath == "" {
 		*certPath = findCharlesCA()
@@ -148,19 +155,28 @@ func pairCommand(args []string) error {
 	}
 	digest := sha256.Sum256(der)
 	payload := pairing{
-		Version: 1, Name: *name, Host: *host, Port: *port,
+		Version: 2, Name: *name, Host: *host, Port: *port,
 		CertificateDER:    base64.StdEncoding.EncodeToString(der),
 		CertificateSHA256: strings.ToUpper(hex.EncodeToString(digest[:])),
 	}
-	uri, err := encodePairing(payload)
+	bundle, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	code, err := qrcode.New(uri, qrcode.Medium)
+	server, err := startPairingServer(*host, *servePort, bundle)
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+	uri, err := encodePairingReference(server.URL(), bundle)
+	if err != nil {
+		return err
+	}
+	code, err := qrcode.New(uri, qrcode.Low)
 	if err != nil {
 		return fmt.Errorf("生成二维码: %w", err)
 	}
-	if err := code.WriteFile(768, *out); err != nil {
+	if err := code.WriteFile(512, *out); err != nil {
 		return fmt.Errorf("写入二维码: %w", err)
 	}
 	if *uriOut != "" {
@@ -168,24 +184,35 @@ func pairCommand(args []string) error {
 			return fmt.Errorf("写入配对 URI: %w", err)
 		}
 	}
-	fmt.Printf("配置: %s\n代理: %s\nCA SHA-256: %s\n二维码: %s\n\n", *name, net.JoinHostPort(*host, strconv.Itoa(*port)), payload.CertificateSHA256, *out)
-	return printTerminalQRCode(os.Stdout, code, *terminalQR)
+	fmt.Printf("配置: %s\n代理: %s\nCA SHA-256: %s\n二维码: %s\n", *name, net.JoinHostPort(*host, strconv.Itoa(*port)), payload.CertificateSHA256, *out)
+	fmt.Printf("临时服务: %s（%s 后失效）\n", server.URL(), timeout.String())
+	fmt.Println()
+	if err := printTerminalQRCode(os.Stdout, code, *terminalQR); err != nil {
+		return err
+	}
+	fmt.Println("等待手机扫码并完成导入；按 Ctrl+C 可取消。")
+	if err := server.Wait(*timeout); err != nil {
+		return err
+	}
+	fmt.Println("手机已确认导入，临时服务已关闭。")
+	return nil
 }
 
-func encodePairing(value pairing) (string, error) {
-	raw, err := json.Marshal(value)
+func encodePairingReference(downloadURL string, bundle []byte) (string, error) {
+	endpoint, err := url.Parse(downloadURL)
 	if err != nil {
 		return "", err
 	}
-	var compressed bytes.Buffer
-	zipper := gzip.NewWriter(&compressed)
-	if _, err = zipper.Write(raw); err != nil {
-		return "", err
+	port := endpoint.Port()
+	token := strings.TrimPrefix(endpoint.EscapedPath(), "/p/")
+	if endpoint.Scheme != "http" || endpoint.Hostname() == "" || port == "" || token == endpoint.EscapedPath() || token == "" {
+		return "", errors.New("临时配对地址无效")
 	}
-	if err = zipper.Close(); err != nil {
-		return "", err
-	}
-	return "httpcapture://pair/v1/" + base64.RawURLEncoding.EncodeToString(compressed.Bytes()), nil
+	digest := sha256.Sum256(bundle)
+	return fmt.Sprintf(
+		"httpcapture://p/2/%s/%s/%s/%s",
+		endpoint.Hostname(), port, token, base64.RawURLEncoding.EncodeToString(digest[:]),
+	), nil
 }
 
 func readCertificate(path string) ([]byte, string, error) {

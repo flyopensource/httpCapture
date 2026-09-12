@@ -14,16 +14,23 @@ HTTP Capture 是面向日常 Android 开发的 Charles 抓包助手。它不替�
 
 1. 在 Charles 开启 Proxy，并确认端口（默认 `8888`）。
 2. 导出 Charles CA 公钥证书，或使用 Charles 默认 CA 文件。
-3. 在电脑生成二维码：
+3. 给 Linux AMD64 CLI 增加执行权限并生成二维码：
 
    ```bash
-   cd cli
-   go build -o bin/httpcapture .
-   bin/httpcapture pair --host 192.168.1.10 --port 8888 --out pair.png
+   chmod +x cli/bin/httpcapture-linux-amd64
+   ./cli/bin/httpcapture-linux-amd64 pair \
+     --host 192.168.1.10 \
+     --port 8888 \
+     --out pair.png
    ```
 
-4. 在 Android App 中扫码，按提示安装 CA，然后选择一个或多个应用。
-5. 首次点击“开始抓包”确认系统 VPN 权限。以后可直接使用 App 或快捷磁贴启停。
+4. 保持 CLI 运行，在 Android App 中扫码；App 会自动从电脑下载并校验配置和 CA，成功后 CLI 自动退出。
+5. 按提示安装 CA，然后选择一个或多个应用。
+6. 首次点击“开始抓包”确认系统 VPN 权限。以后可直接使用 App 或快捷磁贴启停。
+
+配对二维码只包含有效约 3 分钟的一次性局域网地址和配置包指纹，不包含完整 CA，因此终端显示更小。手机与电脑需要处于可互相访问的局域网；扫码页固定为竖屏。
+
+`pair` 执行后不会立即退出，这是正常行为：CLI 正在提供一次性配置下载服务。APK 导入成功后 CLI 会自动退出；也可以按 `Ctrl+C` 取消。完整参数、证书查找规则和常见问题见 [CLI 使用文档](cli/README.md)。
 
 Android 11 及更高版本禁止普通 App 直接安装 CA。HTTP Capture 会把证书写到 `Downloads/HTTP Capture` 并打开系统安全设置；用户仍需在系统的“安装 CA 证书”页面选择该文件。这是 Android 平台限制，不是 App 权限缺失。
 
@@ -32,6 +39,14 @@ Android 11 及更高版本禁止普通 App 直接安装 CA。HTTP Capture 会把
 ```bash
 ./gradlew --no-parallel --max-workers=1 :app:assembleDebug :sample-client:assembleDebug :debug-trust:assemble
 cd cli && go test ./...
+```
+
+Linux AMD64 发布版 CLI：
+
+```bash
+cd cli
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags='-s -w' -o bin/httpcapture-linux-amd64 .
 ```
 
 `app` 的 Release 只生成两个独立 APK，不生成 Universal 或 x86_64 Release APK：
