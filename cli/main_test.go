@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 func TestEncodePairingRoundTrip(t *testing.T) {
@@ -40,6 +42,62 @@ func TestEncodePairingRoundTrip(t *testing.T) {
 	}
 	if output != input {
 		t.Fatalf("round trip mismatch: %#v", output)
+	}
+}
+
+func TestCompactTerminalQRCodeDimensions(t *testing.T) {
+	code, err := qrcode.New("httpcapture://pair/v1/test", qrcode.Medium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, columns, rows := compactTerminalQRCode(code)
+	bitmap := code.Bitmap()
+	if columns != len(bitmap[0]) {
+		t.Fatalf("columns = %d, want %d", columns, len(bitmap[0]))
+	}
+	if rows != (len(bitmap)+1)/2 {
+		t.Fatalf("rows = %d, want %d", rows, (len(bitmap)+1)/2)
+	}
+	if !strings.ContainsAny(text, "▀▄█") {
+		t.Fatal("compact QR did not use half-block characters")
+	}
+}
+
+func TestTerminalQRCodeAutoSizing(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        string
+		interactive bool
+		columns     int
+		rows        int
+		want        bool
+	}{
+		{name: "auto fits", mode: terminalQRAuto, interactive: true, columns: 120, rows: 60, want: true},
+		{name: "auto too narrow", mode: terminalQRAuto, interactive: true, columns: 79, rows: 60, want: false},
+		{name: "auto too short", mode: terminalQRAuto, interactive: true, columns: 120, rows: 39, want: false},
+		{name: "auto exact boundary", mode: terminalQRAuto, interactive: true, columns: 80, rows: 40, want: false},
+		{name: "auto redirected", mode: terminalQRAuto, interactive: false, columns: 120, rows: 60, want: false},
+		{name: "always redirected", mode: terminalQRAlways, interactive: false, want: true},
+		{name: "never", mode: terminalQRNever, interactive: true, columns: 120, rows: 60, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := shouldPrintTerminalQRCode(test.mode, test.interactive, test.columns, test.rows, 80, 40)
+			if got != test.want {
+				t.Fatalf("got %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateTerminalQRMode(t *testing.T) {
+	for _, mode := range []string{terminalQRAuto, terminalQRAlways, terminalQRNever} {
+		if err := validateTerminalQRMode(mode); err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+	}
+	if err := validateTerminalQRMode("small"); err == nil {
+		t.Fatal("expected invalid mode error")
 	}
 }
 

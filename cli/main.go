@@ -77,7 +77,7 @@ func usage() {
 	fmt.Print(`httpcapture - Android + Charles 抓包助手
 
 用法:
-  httpcapture pair [--host IP] [--port 8888] [--cert FILE] [--name NAME] [--out pair.png]
+  httpcapture pair [--host IP] [--port 8888] [--cert FILE] [--name NAME] [--out pair.png] [--terminal-qr auto|always|never]
   httpcapture charles status [--proxy 127.0.0.1:8888]
   httpcapture record start [--app PACKAGE ...] [--client-ip IP] [--clear]
   httpcapture record stop [--out DIR] [--formats chls,xml,json,har]
@@ -104,7 +104,11 @@ func pairCommand(args []string) error {
 	name := fs.String("name", "", "此 Charles 配置名称")
 	out := fs.String("out", "httpcapture-pair.png", "二维码 PNG 路径")
 	uriOut := fs.String("uri-out", "", "可选：同时写出配对 URI，便于模拟器自动化")
+	terminalQR := fs.String("terminal-qr", "auto", "终端二维码显示方式：auto、always 或 never")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateTerminalQRMode(*terminalQR); err != nil {
 		return err
 	}
 	if *host == "" {
@@ -165,8 +169,7 @@ func pairCommand(args []string) error {
 		}
 	}
 	fmt.Printf("配置: %s\n代理: %s\nCA SHA-256: %s\n二维码: %s\n\n", *name, net.JoinHostPort(*host, strconv.Itoa(*port)), payload.CertificateSHA256, *out)
-	fmt.Print(code.ToString(false))
-	return nil
+	return printTerminalQRCode(os.Stdout, code, *terminalQR)
 }
 
 func encodePairing(value pairing) (string, error) {

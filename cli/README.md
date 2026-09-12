@@ -15,6 +15,8 @@ httpcapture pair \
 
 只接受 DER/PEM X.509 CA 公钥证书，拒绝可能包含私钥的 `.p12/.pfx`。若省略 `--cert`，工具会尝试读取 Charles 默认 CA 位置；若省略 `--host`，工具会选择一个局域网 IPv4 地址。
 
+终端二维码默认使用 `--terminal-qr auto`：CLI 会使用紧凑字符渲染并检测终端宽高，只有二维码能够完整显示时才输出；空间不足或输出被重定向时只保留 PNG，避免二维码换行损坏。可使用 `--terminal-qr always` 强制显示，或使用 `--terminal-qr never` 始终关闭终端二维码。PNG 固定保持高清输出，不受终端尺寸影响。
+
 ## Charles 录制
 
 先在 Charles 的 `Proxy Settings > Web Interface` 启用 Web Interface。
