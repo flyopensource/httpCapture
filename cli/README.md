@@ -225,7 +225,7 @@ httpcapture serve \
 - 控制接口只提供状态、开始会话、VPN 已启动确认、停止/放弃会话，不提供 Web 数据查看、HAR 下载或任意命令执行。
 - `--pair` 会生成一次性 v4 配对二维码，配置包内包含代理 CA 公钥证书、控制服务地址和本设备 token；代理 CA 私钥不会进入二维码或配置包。
 - Proxify 模式下，`serve --control-host ... --pair` 会确保受管 Proxify 已运行；停止抓包会话不会停止 Proxify 进程。
-- APK 回到前台会查询 CLI 状态并提示不一致；联动开始失败时不会静默启动 VPN，用户必须显式选择“仅启动 VPN”。
+- APK 回到前台会查询 CLI 状态并提示不一致；联动开始失败时不会静默启动 VPN，用户必须显式选择“仅启动 VPN”。VPN 启动失败时，APK 会请求 CLI 放弃 starting 会话；CLI 标记为 `abandoned`，不会导出为 completed 会话。
 
 常用参数：
 

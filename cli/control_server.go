@@ -26,6 +26,7 @@ const controlAPIPrefix = "/control/v1"
 type controlSessionController interface {
 	start(args []string) (sessionState, error)
 	stop(args []string) error
+	abandon(captureID string) (sessionState, error)
 	active() (sessionState, error)
 }
 
@@ -111,7 +112,7 @@ func (app *controlApplication) ServeHTTP(response http.ResponseWriter, request *
 	case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/stop"):
 		app.handleStop(response, request, strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, controlAPIPrefix+"/captures/"), "/stop"), device)
 	case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/abandon"):
-		app.handleStop(response, request, strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, controlAPIPrefix+"/captures/"), "/abandon"), device)
+		app.handleAbandon(response, request, strings.TrimSuffix(strings.TrimPrefix(request.URL.Path, controlAPIPrefix+"/captures/"), "/abandon"))
 	default:
 		http.NotFound(response, request)
 	}
@@ -150,16 +151,16 @@ func (app *controlApplication) servePairing(response http.ResponseWriter, reques
 func (app *controlApplication) authenticate(response http.ResponseWriter, request *http.Request) (controlDevice, bool) {
 	value := request.Header.Get("Authorization")
 	if !strings.HasPrefix(value, "Bearer ") {
-		http.Error(response, "missing bearer token", http.StatusUnauthorized)
+		writeJSON(response, http.StatusUnauthorized, controlResponse{OK: false, Error: "缺少控制凭据，请重新扫码配对"})
 		return controlDevice{}, false
 	}
 	device, ok, err := findControlDeviceByToken(strings.TrimPrefix(value, "Bearer "))
 	if err != nil {
-		http.Error(response, err.Error(), http.StatusInternalServerError)
+		writeJSON(response, http.StatusInternalServerError, controlResponse{OK: false, Error: err.Error()})
 		return controlDevice{}, false
 	}
 	if !ok {
-		http.Error(response, "invalid bearer token", http.StatusUnauthorized)
+		writeJSON(response, http.StatusUnauthorized, controlResponse{OK: false, Error: "控制凭据无效或已撤销，请重新扫码配对"})
 		return controlDevice{}, false
 	}
 	return device, true
@@ -282,6 +283,28 @@ func (app *controlApplication) handleStop(response http.ResponseWriter, request 
 		completed.SessionDir = state.SessionDir
 	}
 	app.rememberAndReply(response, payload.CommandID, http.StatusOK, completed)
+}
+
+func (app *controlApplication) handleAbandon(response http.ResponseWriter, request *http.Request, captureID string) {
+	var payload controlCaptureRequest
+	if !decodeControlJSON(response, request, &payload) {
+		return
+	}
+	if payload.CommandID == "" || payload.CaptureID != captureID || !validCaptureID(captureID) {
+		writeJSON(response, http.StatusBadRequest, controlResponse{OK: false, Error: "放弃请求无效"})
+		return
+	}
+	if app.replyCachedCommand(response, payload.CommandID) {
+		return
+	}
+	state, err := app.sessions.abandon(captureID)
+	if err != nil {
+		app.rememberAndReply(response, payload.CommandID, http.StatusConflict, controlResponse{OK: false, Error: err.Error()})
+		return
+	}
+	app.rememberAndReply(response, payload.CommandID, http.StatusOK, controlResponse{
+		OK: true, CaptureID: captureID, Status: state.Status, EndTimeMS: state.StoppedMS, SessionDir: state.SessionDir,
+	})
 }
 
 func (app *controlApplication) replyCachedCommand(response http.ResponseWriter, commandID string) bool {

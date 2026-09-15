@@ -35,6 +35,42 @@ func (captureSessionManager) stop(args []string) error {
 	return withSessionOperationLock(func() error { return recordStop(args) })
 }
 
+func (captureSessionManager) abandon(captureID string) (sessionState, error) {
+	var abandoned sessionState
+	err := withSessionOperationLock(func() error {
+		state, err := readState()
+		if err != nil {
+			return err
+		}
+		if state.CaptureID != captureID {
+			return fmt.Errorf("活动会话是 %s，不是 %s", state.CaptureID, captureID)
+		}
+		if state.Engine == engineCharles {
+			if state.ProxyHost == "" || state.ProxyPort <= 0 {
+				return errors.New("Charles 会话缺少代理地址，无法安全放弃")
+			}
+			client, err := newCharlesClient(fmt.Sprintf("%s:%d", state.ProxyHost, state.ProxyPort))
+			if err != nil {
+				return err
+			}
+			if _, err := client.get("/recording/stop"); err != nil {
+				return fmt.Errorf("停止 Charles Recording: %w", err)
+			}
+		}
+		state.Status = "abandoned"
+		state.StoppedMS = time.Now().UnixMilli()
+		if err := writeSessionMetadata(state); err != nil {
+			return err
+		}
+		if err := clearState(); err != nil {
+			return err
+		}
+		abandoned = state
+		return nil
+	})
+	return abandoned, err
+}
+
 func (captureSessionManager) active() (sessionState, error) {
 	return readState()
 }
