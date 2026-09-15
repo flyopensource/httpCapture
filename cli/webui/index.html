@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="httpcapture-token" content="__HTTPCAPTURE_TOKEN__">
+  <title>httpCapture</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><h1>httpCapture</h1><p>本地抓包会话查看器</p></div>
+    <div class="top-actions"><span id="status" role="status">正在读取本地会话…</span><span id="live-status" role="status">实时连接中…</span><button id="live-toggle" type="button">暂停页面更新</button><button id="export-all" type="button">导出全部</button><button id="rescan" class="primary">重新扫描</button></div>
+  </header>
+  <div class="workspace">
+    <aside class="sessions-panel">
+      <form id="session-filters" class="filters compact">
+        <div class="field-row">
+          <label>引擎<select name="engine"><option value="">全部</option><option>proxify</option><option>charles</option><option>mitmproxy</option></select></label>
+          <label>应用<input name="package" placeholder="包名"></label>
+        </div>
+        <label>设备<input name="device" placeholder="设备名称"></label>
+        <div class="field-row">
+          <label>开始<input name="from" type="datetime-local"></label>
+          <label>结束<input name="to" type="datetime-local"></label>
+        </div>
+        <button>筛选会话</button>
+        <button id="export-filtered-sessions" type="button">导出筛选会话</button>
+      </form>
+      <div class="panel-heading"><strong>抓包会话</strong><span><span id="session-count">0</span> · 已选 <span id="selected-session-count">0</span></span></div>
+      <div id="sessions" class="session-list" aria-live="polite"></div>
+      <button id="export-selected-sessions" type="button" class="sidebar-export">导出已选会话/请求</button>
+    </aside>
+    <main class="requests-panel">
+      <section id="empty-state" class="empty-state"><h2>选择一个抓包会话</h2><p>请求内容只从本机抓包目录读取，不会上传。</p></section>
+      <section id="session-view" hidden>
+        <div class="session-title">
+          <div><h2 id="selected-title"></h2><p id="selected-meta"></p></div>
+          <div class="session-actions">
+            <button id="export-session" type="button">导出本会话</button>
+            <button id="export-filtered-requests" type="button">导出当前查询</button>
+            <a id="export-har" class="button" hidden>导出 HAR</a>
+            <button id="open-folder">打开目录</button>
+            <button id="trash-session" class="danger">移到回收目录</button>
+          </div>
+        </div>
+        <form id="request-filters" class="filters">
+          <label class="search">搜索<input name="q" placeholder="URL、Host、Path、Method、状态码、Header 或 Body"></label>
+          <label>Method<select name="method"><option value="">全部</option><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
+          <label>状态<input name="status" placeholder="200 / 2xx"></label>
+          <label>Content-Type<input name="contentType" placeholder="json"></label>
+          <label>耗时下限 ms<input name="minDurationMs" type="number" min="0"></label>
+          <label>耗时上限 ms<input name="maxDurationMs" type="number" min="0"></label>
+          <label>大小下限 B<input name="minSize" type="number" min="0"></label>
+          <label>大小上限 B<input name="maxSize" type="number" min="0"></label>
+          <label>排序<select name="sort"><option value="desc">最新优先</option><option value="asc">最早优先</option></select></label>
+          <button>查询</button>
+        </form>
+        <div class="request-summary">
+          <span><span id="request-count">0 条请求</span> · 已选 <span id="selected-request-count">0</span><span id="new-request-hint" hidden></span></span>
+          <nav><button id="previous-page" type="button">上一页</button><span id="page-label">1 / 1</span><button id="next-page" type="button">下一页</button></nav>
+        </div>
+        <div class="request-table-wrap">
+          <table class="request-table">
+            <thead><tr><th>选择</th><th>时间</th><th>Method</th><th>状态</th><th>Host / Path</th><th>类型</th><th>耗时</th><th>大小</th></tr></thead>
+            <tbody id="requests"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <aside id="detail-panel" class="detail-panel" hidden>
+      <div class="detail-heading"><div><span id="detail-method" class="method"></span><strong id="detail-status"></strong></div><button id="close-detail" aria-label="关闭详情">×</button></div>
+      <p id="detail-url" class="detail-url"></p>
+      <div id="detail-timing" class="facts"></div>
+      <details open><summary>Query</summary><pre id="detail-query"></pre></details>
+      <details open><summary>Request Headers</summary><pre id="request-headers"></pre></details>
+      <details open><summary>Request Body</summary><div id="request-body"></div></details>
+      <details open><summary>Response Headers</summary><pre id="response-headers"></pre></details>
+      <details open><summary>Response Body</summary><div id="response-body"></div></details>
+    </aside>
+  </div>
+  <dialog id="export-confirm" class="export-dialog">
+    <h2>确认导出抓包数据</h2>
+    <p>ZIP 可能包含 Cookie、Token、请求体和个人数据。只会从本机会话目录读取并下载到本机，不会上传。</p>
+    <div class="dialog-actions">
+      <button id="export-confirm-cancel" type="button">取消</button>
+      <button id="export-confirm-ok" type="button" class="primary">开始导出</button>
+    </div>
+  </dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>

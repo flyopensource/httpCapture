@@ -7,7 +7,7 @@ HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不�
 - `app`：原生 Kotlin + Compose 控制 App，最低 Android 8.0（API 26）。
 - `debug-trust`：仅供业务 App 的 Debug 构建接入的用户 CA 信任 AAR，最低 API 21。
 - `sample-client`：HTTP/HTTPS 联调样例。
-- `cli`：纯 Go 单文件工具，内嵌 Proxify，负责配对、代理进程、抓包会话、HAR 导出和 Charles 兼容。
+- `cli`：纯 Go 单文件工具，内嵌 Proxify，负责配对、代理进程、抓包会话、SQLite/FTS5 索引、本地 Web 查看、结构化批量导出、HAR 导出和 Charles 兼容。
 - `native`：固定版本 tun2proxy 的 Android 构建脚本和安全补丁。
 
 ## 快速开始
@@ -29,8 +29,9 @@ HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不�
 
 3. 保持 CLI 运行，在 Android App 中扫码；App 会自动下载并校验代理配置和 CA，成功后 CLI 自动退出。
 4. 按提示安装 CA，然后选择一个或多个应用。
-5. 在电脑执行 `httpcapture record start --package com.example.app`，然后在 APK 中开始抓包。
-6. 完成后执行 `httpcapture record stop`，会话目录包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
+5. 在电脑执行 `httpcapture record start --package com.example.app`，命令会保持前台；然后在 APK 中开始抓包。
+6. 完成后在前台按 `Ctrl+C` 正常停止/归档，或从另一终端执行 `httpcapture record stop`。会话目录包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
+7. 执行 `httpcapture web`，在只监听本机的页面中搜索、查看和批量导出 Proxify 请求；也可执行 `httpcapture serve`，保持本地 Web 与会话状态前台可见。
 
 继续使用 Charles 时无需由 CLI 启动代理，导出 Charles CA 后执行 `httpcapture pair --engine charles`。mitmproxy 作为备用引擎继续保留。
 
@@ -106,6 +107,8 @@ export HTTPCAPTURE_SIGNING_KEY_PASSWORD='从密码管理器读取'
 - 证书锁定、自带证书库、Cronet 特殊配置等不在首版兼容范围。
 - 多 App 同时抓包时，代理数据不能可靠判断每条请求属于哪个 Android 包；CLI 只保存本次应用集合标签。
 - 当前内嵌 Proxify 会把 HTTP/2 客户端连接降级为 HTTP/1.1；UDP/QUIC 不是当前目标，HTTPS 客户端通常会回退到 TCP。
-- SSE/长响应可能被缓冲，WebSocket 实测不能可靠透传；V0.3 不支持这两类流量。
+- SSE/长响应可能被缓冲，WebSocket 实测不能可靠透传；当前版本不支持这两类流量。
 
-V0.3 继续使用配对协议 v3，新增 `proxify` 引擎。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
+V0.4 继续使用配对协议 v3。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
+
+当前 `serve` 仅提供本机 Web 和前台会话管理；本地 Web 已支持对已写完 JSONL 事务的实时增量索引与页面刷新。APK→CLI 直接控制和配对 v4 尚未实现，不能将 APK 的 VPN 状态当成电脑端受管会话已经开启。

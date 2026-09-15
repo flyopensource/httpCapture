@@ -25,7 +25,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 const (
 	engineCharles   = "charles"
@@ -82,6 +82,10 @@ func main() {
 		err = recordCommand(os.Args[2:])
 	case "export":
 		err = exportCommand(os.Args[2:])
+	case "web":
+		err = webCommand(os.Args[2:])
+	case "serve":
+		err = serveCommand(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("httpcapture", version)
 		return
@@ -112,7 +116,11 @@ func usage() {
   httpcapture record stop [--out DIR] [--formats jsonl,har|chls,xml,json,har]
   httpcapture record status
   httpcapture export --input session.xml|session.har --output filtered.xml|filtered.har [--from-ms N] [--to-ms N] [--client-ip IP]
+  httpcapture web [--host 127.0.0.1] [--port 9080] [--sessions DIR] [--no-open]
+  httpcapture serve [--web-port 9080] [--sessions DIR] [--no-open]
 
+record start 默认前台驻留；Ctrl+C 会安全停止当前会话。
+serve 当前仅提供回环 Web 和前台会话管理；配对 v4 完成前不会暴露 APK 控制端口。
 record 默认使用 Proxify。Charles 模式需要显式指定 --engine charles；--clear 只适用于 Charles，且会先备份 .chls。
 `)
 	os.Exit(0)
@@ -465,9 +473,9 @@ func recordCommand(args []string) error {
 	}
 	switch args[0] {
 	case "start":
-		return recordStart(args[1:])
+		return recordStartForeground(args[1:])
 	case "stop":
-		return recordStop(args[1:])
+		return sessions.stop(args[1:])
 	case "status":
 		return recordStatus(args[1:])
 	default:
@@ -508,6 +516,18 @@ func recordStart(args []string) error {
 	if err != nil {
 		return err
 	}
+	proxyAddress := *proxy
+	if !strings.Contains(proxyAddress, "://") {
+		proxyAddress = "http://" + proxyAddress
+	}
+	proxyURL, err := url.Parse(proxyAddress)
+	if err != nil {
+		return err
+	}
+	proxyPort, err := strconv.Atoi(proxyURL.Port())
+	if err != nil || proxyPort < 1 || proxyPort > 65535 {
+		return errors.New("Charles --proxy 必须包含有效端口")
+	}
 	captureID, err := newCaptureID()
 	if err != nil {
 		return err
@@ -519,6 +539,7 @@ func recordStart(args []string) error {
 	state := sessionState{
 		CaptureID: captureID, Engine: engineCharles, Packages: packages,
 		ClientIP: strings.TrimSpace(*clientIP), DeviceName: strings.TrimSpace(*deviceName),
+		ProxyHost: proxyURL.Hostname(), ProxyPort: proxyPort,
 		StartedMS: time.Now().UnixMilli(), Status: "recording", SessionDir: sessionDir,
 	}
 	if *clear {
