@@ -35,7 +35,13 @@ class ConfigStore(context: Context) {
         val packages = preferences.getStringSet(KEY_PACKAGES, emptySet()).orEmpty().toSet()
         val activeId = preferences.getString(KEY_ACTIVE_PROFILE, null)
             ?.takeIf { id -> profiles.any { it.id == id } }
-        return CaptureSettings(profiles, activeId, packages, preferences.getString(KEY_ACTIVE_CAPTURE, null))
+        return CaptureSettings(
+            profiles = profiles,
+            activeProfileId = activeId,
+            selectedPackages = packages,
+            activeCaptureId = preferences.getString(KEY_ACTIVE_CAPTURE, null),
+            vpnOnlyMode = preferences.getBoolean(KEY_VPN_ONLY_MODE, false),
+        )
     }
 
     fun upsertProfile(profile: CaptureProfile) {
@@ -72,6 +78,10 @@ class ConfigStore(context: Context) {
         }.apply()
     }
 
+    fun saveVpnOnlyMode(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_VPN_ONLY_MODE, enabled).apply()
+    }
+
     private fun saveProfiles(profiles: List<CaptureProfile>) {
         val array = JSONArray()
         profiles.forEach { profile ->
@@ -98,6 +108,7 @@ class ConfigStore(context: Context) {
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_PACKAGES = "packages"
         private const val KEY_ACTIVE_CAPTURE = "active_capture"
+        private const val KEY_VPN_ONLY_MODE = "vpn_only_mode"
     }
 }
 

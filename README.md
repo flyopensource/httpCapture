@@ -111,4 +111,4 @@ export HTTPCAPTURE_SIGNING_KEY_PASSWORD='从密码管理器读取'
 
 V0.4 已新增 `serve --control-host ... --pair` 的配对协议 v4。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
 
-当前 `serve` 默认仍只提供本机 Web 和前台会话管理；只有显式传入 `--control-host` 才开放受认证的手机控制 HTTPS。APK 导入 v4 配置后，主按钮和快捷磁贴会先通知 CLI 创建记录会话，再启动 VPN，并在停止时先停 VPN 再通知 CLI 归档。
+当前 `serve` 默认仍只提供本机 Web 和前台会话管理；只有显式传入 `--control-host` 才开放受认证的手机控制 HTTPS。APK 导入 v4 配置后，主按钮和快捷磁贴会先通知 CLI 创建记录会话，再启动 VPN，并在停止时先停 VPN 再通知 CLI 归档。联动失败不会静默降级，用户需要在 APK 中显式选择“仅启动 VPN”。

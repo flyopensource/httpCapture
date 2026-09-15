@@ -34,6 +34,7 @@ func serveCommand(args []string) error {
 	profileName := flags.String("name", "", "配对配置名称")
 	deviceName := flags.String("device-name", "Android", "本次配对的设备名称")
 	qrOut := flags.String("out", "httpcapture-control-pair.png", "v4 配对二维码 PNG 路径")
+	uriOut := flags.String("uri-out", "", "可选：同时写出 v4 配对 URI，便于模拟器自动化")
 	terminalQR := flags.String("terminal-qr", "auto", "终端二维码显示方式：auto、always 或 never")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -135,6 +136,11 @@ func serveCommand(args []string) error {
 			uri, err := encodeControlPairingReference(controlURL+"p/"+pairToken, identity.SHA256, bundle)
 			if err != nil {
 				return err
+			}
+			if *uriOut != "" {
+				if err := secureWrite(*uriOut, []byte(uri+"\n")); err != nil {
+					return fmt.Errorf("写入 v4 配对 URI: %w", err)
+				}
 			}
 			fmt.Println("v4 配对二维码:", *qrOut)
 			if err := printControlPairing(uri, *qrOut, *terminalQR); err != nil {

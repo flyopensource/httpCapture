@@ -88,10 +88,16 @@ class MainActivity : ComponentActivity() {
     private var settingsState by mutableStateOf(CaptureSettings())
     private var messageState by mutableStateOf<String?>(null)
     private var runningState by mutableStateOf(false)
+    private var vpnOnlyFallbackAvailable by mutableStateOf(false)
+    private var pendingVpnOnlyPermission = false
     private var pairingImportRunning = false
 
     private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.resultCode == RESULT_OK) startVpn() else messageState = "未获得系统 VPN 授权"
+        if (it.resultCode == RESULT_OK) {
+            startVpn()
+        } else {
+            handleVpnPermissionDenied()
+        }
     }
     private val certificateInstaller = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         reload()
@@ -105,7 +111,16 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             runningState = intent?.getBooleanExtra(VpnState.EXTRA_RUNNING, false) ?: false
             intent?.getStringExtra(VpnState.EXTRA_ERROR)?.let { messageState = it }
-            if (runningState) confirmDesktopCaptureIfNeeded()
+            val error = intent?.getStringExtra(VpnState.EXTRA_ERROR)
+            if (runningState) {
+                confirmDesktopCaptureIfNeeded()
+            } else if (!error.isNullOrBlank()) {
+                if (settingsState.vpnOnlyMode) {
+                    store.saveVpnOnlyMode(false)
+                    reload()
+                }
+                abandonDesktopCapture("VPN 启动失败：$error")
+            }
         }
     }
 
@@ -130,6 +145,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         reload()
         runningState = VpnState.running
+        refreshDesktopStatus()
     }
 
     override fun onDestroy() {
@@ -195,21 +211,24 @@ class MainActivity : ComponentActivity() {
                 runCatching {
                     messageState = "正在通知电脑开始记录…"
                     val result = withContext(Dispatchers.IO) {
-                        ControlClient.start(profile, settings.selectedPackages, Build.MODEL ?: "Android")
+                        ControlClient.start(profile, settings.selectedPackages, Build.MODEL)
                     }
                     store.saveActiveCapture(result.captureId)
+                    store.saveVpnOnlyMode(false)
                     reload()
+                    vpnOnlyFallbackAvailable = false
                     messageState = "电脑端已创建会话 ${result.captureId}，正在启动 VPN…"
                     val prepare = VpnService.prepare(this@MainActivity)
+                    pendingVpnOnlyPermission = false
                     if (prepare != null) vpnPermission.launch(prepare) else startVpn()
                 }.onFailure {
                     messageState = "电脑端开始记录失败：${it.message}。VPN 未启动"
+                    vpnOnlyFallbackAvailable = true
                 }
             }
             return
         }
-        val prepare = VpnService.prepare(this)
-        if (prepare != null) vpnPermission.launch(prepare) else startVpn()
+        startVpnOnly("当前配置不支持 CLI 联动，已进入仅 VPN 转发模式")
     }
 
     private fun startVpn() {
@@ -219,17 +238,40 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, HttpCaptureVpnService.startIntent(this))
     }
 
+    private fun startVpnOnly(reason: String) {
+        store.saveActiveCapture(null)
+        store.saveVpnOnlyMode(true)
+        reload()
+        vpnOnlyFallbackAvailable = false
+        messageState = "$reason；电脑端不会创建或归档抓包会话"
+        pendingVpnOnlyPermission = true
+        val prepare = VpnService.prepare(this)
+        if (prepare != null) {
+            vpnPermission.launch(prepare)
+        } else {
+            pendingVpnOnlyPermission = false
+            startVpn()
+        }
+    }
+
     private fun stopVpn() {
         val settings = store.load()
         val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
         val captureId = settings.activeCaptureId
         startService(HttpCaptureVpnService.stopIntent(this))
-        if (profile != null && captureId != null && ControlClient.canControl(profile)) {
+        if (settings.vpnOnlyMode || captureId == null) {
+            store.saveVpnOnlyMode(false)
+            reload()
+            messageState = "手机 VPN 已停止；本次为仅 VPN 转发模式，没有电脑端受管会话"
+            return
+        }
+        if (profile != null && ControlClient.canControl(profile)) {
             lifecycleScope.launch {
                 runCatching {
                     messageState = "手机 VPN 已停止，正在通知电脑归档…"
                     withContext(Dispatchers.IO) { ControlClient.stop(profile, captureId) }
                     store.saveActiveCapture(null)
+                    store.saveVpnOnlyMode(false)
                     reload()
                     messageState = "抓包已停止并归档"
                 }.onFailure {
@@ -242,6 +284,7 @@ class MainActivity : ComponentActivity() {
     private fun confirmDesktopCaptureIfNeeded() {
         val settings = store.load()
         val captureId = settings.activeCaptureId ?: return
+        if (settings.vpnOnlyMode) return
         val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId } ?: return
         if (!ControlClient.canControl(profile)) return
         lifecycleScope.launch {
@@ -252,6 +295,70 @@ class MainActivity : ComponentActivity() {
                 messageState = "VPN 已连接，但电脑端确认失败：${it.message}"
             }
         }
+    }
+
+    private fun refreshDesktopStatus() {
+        val settings = store.load()
+        val captureId = settings.activeCaptureId ?: return
+        if (settings.vpnOnlyMode) return
+        val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId } ?: return
+        if (!ControlClient.canControl(profile)) return
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { ControlClient.status(profile) }
+            }.onSuccess { status ->
+                when {
+                    status.status == "idle" && runningState -> {
+                        messageState = "本机 VPN 仍在运行，但电脑端没有活动会话；请停止后重新开始，或继续仅 VPN 转发"
+                    }
+                    status.status == "idle" && !runningState -> {
+                        store.saveActiveCapture(null)
+                        reload()
+                    }
+                    status.captureId == captureId && runningState && status.status == "starting" -> {
+                        confirmDesktopCaptureIfNeeded()
+                    }
+                    status.captureId == captureId && !runningState -> {
+                        messageState = "电脑端会话 $captureId 仍为 ${status.status}，但本机 VPN 未运行；可点击停止让电脑端归档"
+                    }
+                    status.captureId != null && status.captureId != captureId -> {
+                        messageState = "电脑端当前活动会话是 ${status.captureId}，与本机记录的 $captureId 不一致，请先在电脑端确认"
+                    }
+                }
+            }.onFailure {
+                messageState = "无法查询电脑端状态：${it.message}。不会自动停止 VPN 或电脑端会话"
+            }
+        }
+    }
+
+    private fun abandonDesktopCapture(reason: String) {
+        val settings = store.load()
+        val captureId = settings.activeCaptureId ?: return
+        val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId } ?: return
+        if (!ControlClient.canControl(profile) || settings.vpnOnlyMode) return
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { ControlClient.abandon(profile, captureId) }
+                store.saveActiveCapture(null)
+                store.saveVpnOnlyMode(false)
+                reload()
+                messageState = "$reason；已通知电脑端放弃会话 $captureId"
+            }.onFailure {
+                messageState = "$reason；通知电脑端放弃失败，桌面会话 $captureId 状态不确定：${it.message}"
+            }
+        }
+    }
+
+    private fun handleVpnPermissionDenied() {
+        if (pendingVpnOnlyPermission) {
+            pendingVpnOnlyPermission = false
+            store.saveVpnOnlyMode(false)
+            reload()
+            messageState = "未获得系统 VPN 授权，仅 VPN 模式未启动"
+            return
+        }
+        messageState = "未获得系统 VPN 授权"
+        abandonDesktopCapture("未获得系统 VPN 授权，VPN 未启动")
     }
 
     private fun installCertificate(profile: CaptureProfile) {
@@ -385,7 +492,11 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxWidth().height(54.dp),
                         ) { Text(if (runningState) "停止抓包" else "开始抓包") }
                         Text(
-                            if (runningState) "VPN 已连接，仅转发所选应用" else "VPN 未连接",
+                            when {
+                                runningState && settingsState.vpnOnlyMode -> "VPN 已连接：仅代理转发，电脑端未创建受管会话"
+                                runningState -> "VPN 已连接，电脑端联动记录中"
+                                else -> "VPN 未连接"
+                            },
                             color = if (runningState) Color(0xFF15803D) else Color(0xFF64748B),
                         )
                     }
@@ -397,7 +508,16 @@ class MainActivity : ComponentActivity() {
                     }
                     messageState?.let { message ->
                         item {
-                            Card(Modifier.fillMaxWidth()) { Text(message, Modifier.padding(12.dp)) }
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(message)
+                                    if (vpnOnlyFallbackAvailable && !runningState) {
+                                        OutlinedButton(onClick = { startVpnOnly("用户选择在电脑端联动失败后仅启动 VPN") }) {
+                                            Text("仅启动 VPN")
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     item {

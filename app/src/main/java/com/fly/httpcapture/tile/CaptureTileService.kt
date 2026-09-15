@@ -24,20 +24,28 @@ class CaptureTileService : TileService() {
     override fun onClick() {
         super.onClick()
         if (VpnState.running) {
-            val settings = ConfigStore(this).load()
+            val store = ConfigStore(this)
+            val settings = store.load()
             val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
             val captureId = settings.activeCaptureId
             startService(HttpCaptureVpnService.stopIntent(this))
-            if (profile != null && captureId != null && ControlClient.canControl(profile)) {
+            if (settings.vpnOnlyMode || captureId == null) {
+                store.saveVpnOnlyMode(false)
+            } else if (profile != null && ControlClient.canControl(profile)) {
                 Thread {
                     runCatching { ControlClient.stop(profile, captureId) }
-                        .onSuccess { ConfigStore(this).saveActiveCapture(null) }
+                        .onSuccess {
+                            val currentStore = ConfigStore(this)
+                            currentStore.saveActiveCapture(null)
+                            currentStore.saveVpnOnlyMode(false)
+                        }
                 }.start()
             }
             refresh(false)
             return
         }
-        val settings = ConfigStore(this).load()
+        val store = ConfigStore(this)
+        val settings = store.load()
         val ready = settings.activeProfileId != null && settings.selectedPackages.isNotEmpty() && VpnService.prepare(this) == null
         if (!ready) {
             val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -53,7 +61,9 @@ class CaptureTileService : TileService() {
             Thread {
                 runCatching {
                     val result = ControlClient.start(profile, settings.selectedPackages, Build.MODEL)
-                    ConfigStore(this).saveActiveCapture(result.captureId)
+                    val currentStore = ConfigStore(this)
+                    currentStore.saveActiveCapture(result.captureId)
+                    currentStore.saveVpnOnlyMode(false)
                     ContextCompat.startForegroundService(this, HttpCaptureVpnService.startIntent(this))
                     ControlClient.confirm(profile, result.captureId)
                 }
@@ -61,6 +71,8 @@ class CaptureTileService : TileService() {
             refresh(true)
             return
         }
+        store.saveActiveCapture(null)
+        store.saveVpnOnlyMode(true)
         ContextCompat.startForegroundService(this, HttpCaptureVpnService.startIntent(this))
         refresh(true)
     }

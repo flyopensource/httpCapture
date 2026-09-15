@@ -136,7 +136,7 @@ httpcapture pair --host 192.168.1.10 --serve-port 39001
 - APK 提示配置校验失败：二维码对应的会话已不可用，应重新运行 `pair` 并扫码。
 - CLI 提示二维码过期：APK 未在超时前确认导入，重新运行即可。
 
-V0.4 继续使用配对协议 v3。开发阶段不迁移旧的本地代理配置，本机已有旧配置时请重新扫码。
+普通 `httpcapture pair` 仍用于只导入代理和 CA 的 v3 配置，不具备 APK 控制 CLI 会话能力。需要一键联动记录时，请使用下文的 `httpcapture serve --control-host ... --pair` 生成 v4 配置。开发阶段不迁移旧的本地代理配置，本机已有旧配置时请重新扫码。
 
 ### 构建 Linux AMD64
 
@@ -225,6 +225,7 @@ httpcapture serve \
 - 控制接口只提供状态、开始会话、VPN 已启动确认、停止/放弃会话，不提供 Web 数据查看、HAR 下载或任意命令执行。
 - `--pair` 会生成一次性 v4 配对二维码，配置包内包含代理 CA 公钥证书、控制服务地址和本设备 token；代理 CA 私钥不会进入二维码或配置包。
 - Proxify 模式下，`serve --control-host ... --pair` 会确保受管 Proxify 已运行；停止抓包会话不会停止 Proxify 进程。
+- APK 回到前台会查询 CLI 状态并提示不一致；联动开始失败时不会静默启动 VPN，用户必须显式选择“仅启动 VPN”。
 
 常用参数：
 
@@ -238,6 +239,7 @@ httpcapture serve \
 | `--cert` | 自动查找 | 代理 CA 公钥证书，自动查找失败时需要手动指定 |
 | `--name` | CA 名称 | APK 中显示的电脑配置名称 |
 | `--out` | `httpcapture-control-pair.png` | v4 二维码 PNG 输出路径 |
+| `--uri-out` | 空 | 将 v4 配对 URI 写入文件，主要用于自动化测试 |
 | `--terminal-qr` | `auto` | `auto`、`always` 或 `never` |
 
 ## Charles 录制

@@ -35,4 +35,5 @@ data class CaptureSettings(
     val activeProfileId: String? = null,
     val selectedPackages: Set<String> = emptySet(),
     val activeCaptureId: String? = null,
+    val vpnOnlyMode: Boolean = false,
 )

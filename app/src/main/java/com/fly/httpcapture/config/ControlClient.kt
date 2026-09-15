@@ -10,6 +10,11 @@ data class ControlCaptureResult(
     val sessionDir: String?,
 )
 
+data class ControlStatus(
+    val status: String,
+    val captureId: String?,
+)
+
 object ControlClient {
     fun canControl(profile: CaptureProfile): Boolean =
         !profile.controlBaseUrl.isNullOrBlank() &&
@@ -41,26 +46,38 @@ object ControlClient {
     fun abandon(profile: CaptureProfile, captureId: String): ControlCaptureResult =
         parseCaptureResult(captureCommand(profile, captureId, "abandon"))
 
+    fun status(profile: CaptureProfile): ControlStatus {
+        require(canControl(profile)) { "当前配置不支持 App 联动，请重新用 serve --pair 扫码" }
+        val json = request(profile, "GET", "/control/v1/status", null)
+        return ControlStatus(
+            status = json.optString("status", "unknown"),
+            captureId = json.optString("captureId").takeIf(String::isNotBlank),
+        )
+    }
+
     private fun captureCommand(profile: CaptureProfile, captureId: String, action: String): JSONObject {
         val body = JSONObject().apply {
             put("commandId", commandId())
             put("captureId", captureId)
         }
-        return post(profile, "/control/v1/captures/$captureId/$action", body)
+        return request(profile, "POST", "/control/v1/captures/$captureId/$action", body)
     }
 
-    private fun post(profile: CaptureProfile, path: String, body: JSONObject): JSONObject {
+    private fun post(profile: CaptureProfile, path: String, body: JSONObject): JSONObject =
+        request(profile, "POST", path, body)
+
+    private fun request(profile: CaptureProfile, method: String, path: String, body: JSONObject?): JSONObject {
         val base = requireNotNull(profile.controlBaseUrl).trimEnd('/')
         val connection = PairingClient.open(base + path, profile.controlCertSha256).apply {
-            requestMethod = "POST"
-            doOutput = true
+            requestMethod = method
+            doOutput = body != null
             setRequestProperty("Authorization", "Bearer ${profile.deviceToken}")
-            setRequestProperty("Content-Type", "application/json")
+            if (body != null) setRequestProperty("Content-Type", "application/json")
         }
-        val bytes = body.toString().toByteArray(Charsets.UTF_8)
-        connection.setFixedLengthStreamingMode(bytes.size)
+        val bytes = body?.toString()?.toByteArray(Charsets.UTF_8)
+        if (bytes != null) connection.setFixedLengthStreamingMode(bytes.size)
         return try {
-            connection.outputStream.use { it.write(bytes) }
+            if (bytes != null) connection.outputStream.use { it.write(bytes) }
             val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             val json = if (text.isBlank()) JSONObject() else JSONObject(text)
