@@ -109,6 +109,6 @@ export HTTPCAPTURE_SIGNING_KEY_PASSWORD='从密码管理器读取'
 - 当前内嵌 Proxify 会把 HTTP/2 客户端连接降级为 HTTP/1.1；UDP/QUIC 不是当前目标，HTTPS 客户端通常会回退到 TCP。
 - SSE/长响应可能被缓冲，WebSocket 实测不能可靠透传；当前版本不支持这两类流量。
 
-V0.4 继续使用配对协议 v3。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
+V0.4 已新增 `serve --control-host ... --pair` 的配对协议 v4。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
 
-当前 `serve` 仅提供本机 Web 和前台会话管理；本地 Web 已支持对已写完 JSONL 事务的实时增量索引与页面刷新。APK→CLI 直接控制和配对 v4 尚未实现，不能将 APK 的 VPN 状态当成电脑端受管会话已经开启。
+当前 `serve` 默认仍只提供本机 Web 和前台会话管理；只有显式传入 `--control-host` 才开放受认证的手机控制 HTTPS。APK 导入 v4 配置后，主按钮和快捷磁贴会先通知 CLI 创建记录会话，再启动 VPN，并在停止时先停 VPN 再通知 CLI 归档。

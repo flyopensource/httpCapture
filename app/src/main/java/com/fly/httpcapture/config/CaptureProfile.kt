@@ -23,10 +23,16 @@ data class CaptureProfile(
     val certificateDerBase64: String,
     val certificateSha256: String,
     val engine: ProxyEngine,
+    val controlBaseUrl: String? = null,
+    val controlCertSha256: String? = null,
+    val profileId: String? = null,
+    val deviceId: String? = null,
+    val deviceToken: String? = null,
 )
 
 data class CaptureSettings(
     val profiles: List<CaptureProfile> = emptyList(),
     val activeProfileId: String? = null,
     val selectedPackages: Set<String> = emptySet(),
+    val activeCaptureId: String? = null,
 )

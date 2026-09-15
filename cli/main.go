@@ -42,6 +42,11 @@ type pairing struct {
 	Port              int    `json:"port"`
 	CertificateDER    string `json:"certificateDer"`
 	CertificateSHA256 string `json:"certificateSha256"`
+	ControlBaseURL    string `json:"controlBaseUrl,omitempty"`
+	ControlCertSHA256 string `json:"controlCertSha256,omitempty"`
+	ProfileID         string `json:"profileId,omitempty"`
+	DeviceID          string `json:"deviceId,omitempty"`
+	DeviceToken       string `json:"deviceToken,omitempty"`
 }
 
 type sessionState struct {
@@ -117,10 +122,10 @@ func usage() {
   httpcapture record status
   httpcapture export --input session.xml|session.har --output filtered.xml|filtered.har [--from-ms N] [--to-ms N] [--client-ip IP]
   httpcapture web [--host 127.0.0.1] [--port 9080] [--sessions DIR] [--no-open]
-  httpcapture serve [--web-port 9080] [--sessions DIR] [--no-open]
+  httpcapture serve [--web-port 9080] [--sessions DIR] [--no-open] [--control-host IP] [--control-port 39000] [--pair]
 
 record start 默认前台驻留；Ctrl+C 会安全停止当前会话。
-serve 当前仅提供回环 Web 和前台会话管理；配对 v4 完成前不会暴露 APK 控制端口。
+serve 默认仅提供回环 Web；显式传入 --control-host 后开放受认证的 APK 控制 HTTPS。
 record 默认使用 Proxify。Charles 模式需要显式指定 --engine charles；--clear 只适用于 Charles，且会先备份 .chls。
 `)
 	os.Exit(0)

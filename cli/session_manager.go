@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -36,6 +37,35 @@ func (captureSessionManager) stop(args []string) error {
 
 func (captureSessionManager) active() (sessionState, error) {
 	return readState()
+}
+
+func markActiveSessionStatus(captureID, status string) error {
+	return withSessionOperationLock(func() error {
+		state, err := readState()
+		if err != nil {
+			return err
+		}
+		if state.CaptureID != captureID {
+			return fmt.Errorf("活动会话是 %s，不是 %s", state.CaptureID, captureID)
+		}
+		state.Status = status
+		if err := writeState(state); err != nil {
+			return err
+		}
+		return writeSessionMetadata(state)
+	})
+}
+
+func readSessionMetadata(directory string) (sessionState, error) {
+	content, err := os.ReadFile(filepath.Join(directory, "meta.json"))
+	if err != nil {
+		return sessionState{}, err
+	}
+	var state sessionState
+	if err := json.Unmarshal(content, &state); err != nil {
+		return sessionState{}, err
+	}
+	return state, nil
 }
 
 func withSessionOperationLock(operation func() error) error {

@@ -24,11 +24,32 @@ func serveCommand(args []string) error {
 	port := flags.Int("web-port", 9080, "本地 Web 查看器端口；0 表示自动选择")
 	sessionsRoot := flags.String("sessions", "", "抓包会话根目录")
 	noOpen := flags.Bool("no-open", false, "启动后不自动打开浏览器")
+	controlHost := flags.String("control-host", "", "手机可访问的局域网 IP；为空则不开放手机控制接口")
+	controlPort := flags.Int("control-port", 39000, "手机控制接口 HTTPS 端口；0 表示自动选择")
+	controlPair := flags.Bool("pair", false, "启动手机控制接口时打印一次性 v4 配对二维码")
+	controlEngine := flags.String("engine", engineProxify, "手机联动使用的代理引擎：proxify 或 charles")
+	var proxyPort optionalPort
+	flags.Var(&proxyPort, "proxy-port", "手机代理端口；Proxify/Charles 默认 8888")
+	certPath := flags.String("cert", "", "代理 CA 证书（DER 或 PEM）；默认按引擎自动查找")
+	profileName := flags.String("name", "", "配对配置名称")
+	deviceName := flags.String("device-name", "Android", "本次配对的设备名称")
+	qrOut := flags.String("out", "httpcapture-control-pair.png", "v4 配对二维码 PNG 路径")
+	terminalQR := flags.String("terminal-qr", "auto", "终端二维码显示方式：auto、always 或 never")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || *port < 0 || *port > 65535 {
-		return errors.New("serve 用法: [--web-port 0..65535] [--sessions DIR] [--no-open]")
+	if flags.NArg() != 0 || *port < 0 || *port > 65535 || *controlPort < 0 || *controlPort > 65535 {
+		return errors.New("serve 用法: [--web-port 0..65535] [--sessions DIR] [--no-open] [--control-host IP] [--control-port 39000] [--pair]")
+	}
+	*controlEngine = strings.ToLower(strings.TrimSpace(*controlEngine))
+	if *controlHost != "" && *controlEngine != engineProxify && *controlEngine != engineCharles {
+		return errors.New("--engine 仅支持 proxify 或 charles 联动")
+	}
+	if !proxyPort.set {
+		proxyPort.value = defaultProxyPort(*controlEngine)
+	}
+	if err := validateTerminalQRMode(*terminalQR); err != nil {
+		return err
 	}
 	if *sessionsRoot == "" {
 		var err error
@@ -68,7 +89,62 @@ func serveCommand(args []string) error {
 	webURL := fmt.Sprintf("http://127.0.0.1:%d/", listener.Addr().(*net.TCPAddr).Port)
 	fmt.Println("httpcapture serve 已启动；本地 Web:", webURL)
 	fmt.Println("会话目录:", index.root)
-	fmt.Println("当前仅监听本机回环地址；APK 局域网控制需待配对 v4 和认证完成后启用。")
+	var controlServer *http.Server
+	if *controlHost == "" {
+		fmt.Println("当前仅监听本机回环地址；如需 APK 联动，使用 --control-host 指定手机可访问 IP。")
+	} else {
+		if *controlEngine == engineProxify {
+			if err := ensureManagedProxify(proxyPort.value); err != nil {
+				return err
+			}
+		}
+		if *certPath == "" {
+			*certPath = findProxyCA(*controlEngine)
+		}
+		if *certPath == "" {
+			return errors.New("未找到代理 CA；请先启动代理或使用 --cert 指定 CA 公钥证书")
+		}
+		identity, err := loadOrCreateControlIdentity(*controlHost)
+		if err != nil {
+			return err
+		}
+		controlListener, controlURL, err := listenControlAddress(*controlHost, *controlPort)
+		if err != nil {
+			return err
+		}
+		defer controlListener.Close()
+		pairToken, err := randomIdentifier(22)
+		if err != nil {
+			return err
+		}
+		device, token, err := createControlDevice(*deviceName, *controlEngine)
+		if err != nil {
+			return err
+		}
+		bundle, proxyCA, err := buildControlPairingBundle(*controlEngine, *profileName, *controlHost, proxyPort.value, *certPath, controlURL, identity.SHA256, device, token)
+		if err != nil {
+			return err
+		}
+		app := newControlApplication(bundle, pairToken)
+		controlServer = serveControlListener(controlListener, app, identity)
+		fmt.Println("手机控制服务:", controlURL)
+		fmt.Println("控制服务 TLS SHA-256:", identity.SHA256)
+		fmt.Println("代理:", net.JoinHostPort(*controlHost, strconv.Itoa(proxyPort.value)))
+		fmt.Println("代理 CA SHA-256:", proxyCA)
+		if *controlPair {
+			uri, err := encodeControlPairingReference(controlURL+"p/"+pairToken, identity.SHA256, bundle)
+			if err != nil {
+				return err
+			}
+			fmt.Println("v4 配对二维码:", *qrOut)
+			if err := printControlPairing(uri, *qrOut, *terminalQR); err != nil {
+				return err
+			}
+			fmt.Println("等待 APK 扫码导入；serve 会继续保持运行。")
+		} else {
+			fmt.Println("提示: 需要给 APK 配对时，请重新运行并加 --pair。")
+		}
+	}
 	if !*noOpen {
 		if err := openExternal(webURL); err != nil {
 			fmt.Fprintln(os.Stderr, "提示: 请手动打开本地 Web 地址:", err)
@@ -90,6 +166,9 @@ func serveCommand(args []string) error {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			if controlServer != nil {
+				_ = controlServer.Shutdown(ctx)
+			}
 			return server.Shutdown(ctx)
 		case err := <-serverErr:
 			if errors.Is(err, http.ErrServerClosed) {

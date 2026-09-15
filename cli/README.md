@@ -205,14 +205,40 @@ httpcapture web --sessions /path/to/httpcapture-sessions --no-open
 
 活动 JSONL 的已完成行位置和文件身份保存在 SQLite；文件末尾半行不提前展示。文件截断、替换或位置失效时重建受影响会话的索引，不扫描其他会话的完整历史；索引重置时清除可能误指向别的请求的多选和详情。页面只接收请求摘要，Headers/Body 仍在打开详情时按需读取。当前实时页面首版已通过 1000 条新增记录、半行、损坏、截断、替换及重连的合成数据测试；真实长时间录制和高负载回归仍待补充。
 
-## 前台 serve（当前仅本机入口）
+## 前台 serve 与 APK 联动
 
 ```bash
 httpcapture serve
 httpcapture serve --web-port 0 --no-open
+httpcapture serve \
+  --control-host 192.168.1.10 \
+  --control-port 39000 \
+  --pair
 ```
 
-`serve` 在前台持续显示服务和会话状态，同时启动只监听 `127.0.0.1` 的本地 Web。单次会话停止后服务继续运行；按 `Ctrl+C` 时会检查活动会话并走正常停止/归档流程。当前**没有开放手机控制端口**：APK 仍只负责 VPN 启停，不能由 App 直接创建 CLI `record` 会话。固定身份 HTTPS 配对 v4、逐设备凭据和 APK 控制属于 V0.4 后续工作，未完成前不会开放未认证的局域网接口。
+`serve` 在前台持续显示服务和会话状态，同时启动只监听 `127.0.0.1` 的本地 Web。单次会话停止后服务继续运行；按 `Ctrl+C` 时会检查活动会话并走正常停止/归档流程。
+
+默认情况下 `serve` 不开放手机控制端口。需要 APK 主按钮/快捷磁贴直接控制 CLI 记录时，显式传入 `--control-host`：
+
+- 本地 Web 仍只监听 `127.0.0.1`，不会暴露到局域网。
+- 手机控制接口使用独立 HTTPS 身份，二维码 v4 会携带控制服务证书 SHA-256，APK 下载配置和后续控制请求都会校验该指纹。
+- 控制接口只提供状态、开始会话、VPN 已启动确认、停止/放弃会话，不提供 Web 数据查看、HAR 下载或任意命令执行。
+- `--pair` 会生成一次性 v4 配对二维码，配置包内包含代理 CA 公钥证书、控制服务地址和本设备 token；代理 CA 私钥不会进入二维码或配置包。
+- Proxify 模式下，`serve --control-host ... --pair` 会确保受管 Proxify 已运行；停止抓包会话不会停止 Proxify 进程。
+
+常用参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--control-host` | 空 | 手机可访问的局域网 IP；为空则只运行本机 Web |
+| `--control-port` | `39000` | 手机控制 HTTPS 端口；`0` 表示自动选择 |
+| `--pair` | `false` | 打印并写出 v4 配对二维码 |
+| `--engine` | `proxify` | 联动抓包引擎：当前支持 `proxify`、`charles` |
+| `--proxy-port` | 按引擎 | 手机实际连接的代理端口 |
+| `--cert` | 自动查找 | 代理 CA 公钥证书，自动查找失败时需要手动指定 |
+| `--name` | CA 名称 | APK 中显示的电脑配置名称 |
+| `--out` | `httpcapture-control-pair.png` | v4 二维码 PNG 输出路径 |
+| `--terminal-qr` | `auto` | `auto`、`always` 或 `never` |
 
 ## Charles 录制
 

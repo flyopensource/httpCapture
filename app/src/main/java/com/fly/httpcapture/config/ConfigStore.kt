@@ -22,6 +22,11 @@ class ConfigStore(context: Context) {
                             certificateDerBase64 = item.getString("certificateDer"),
                             certificateSha256 = item.getString("certificateSha256"),
                             engine = ProxyEngine.fromWire(item.getString("engine")),
+                            controlBaseUrl = item.optString("controlBaseUrl").takeIf(String::isNotBlank),
+                            controlCertSha256 = item.optString("controlCertSha256").takeIf(String::isNotBlank),
+                            profileId = item.optString("profileId").takeIf(String::isNotBlank),
+                            deviceId = item.optString("deviceId").takeIf(String::isNotBlank),
+                            deviceToken = item.optString("deviceToken").takeIf(String::isNotBlank),
                         )
                     )
                 }
@@ -30,7 +35,7 @@ class ConfigStore(context: Context) {
         val packages = preferences.getStringSet(KEY_PACKAGES, emptySet()).orEmpty().toSet()
         val activeId = preferences.getString(KEY_ACTIVE_PROFILE, null)
             ?.takeIf { id -> profiles.any { it.id == id } }
-        return CaptureSettings(profiles, activeId, packages)
+        return CaptureSettings(profiles, activeId, packages, preferences.getString(KEY_ACTIVE_CAPTURE, null))
     }
 
     fun upsertProfile(profile: CaptureProfile) {
@@ -61,6 +66,12 @@ class ConfigStore(context: Context) {
         preferences.edit().putStringSet(KEY_PACKAGES, packages).apply()
     }
 
+    fun saveActiveCapture(captureId: String?) {
+        preferences.edit().apply {
+            if (captureId.isNullOrBlank()) remove(KEY_ACTIVE_CAPTURE) else putString(KEY_ACTIVE_CAPTURE, captureId)
+        }.apply()
+    }
+
     private fun saveProfiles(profiles: List<CaptureProfile>) {
         val array = JSONArray()
         profiles.forEach { profile ->
@@ -72,6 +83,11 @@ class ConfigStore(context: Context) {
                 put("certificateDer", profile.certificateDerBase64)
                 put("certificateSha256", profile.certificateSha256)
                 put("engine", profile.engine.wireName)
+                profile.controlBaseUrl?.let { put("controlBaseUrl", it) }
+                profile.controlCertSha256?.let { put("controlCertSha256", it) }
+                profile.profileId?.let { put("profileId", it) }
+                profile.deviceId?.let { put("deviceId", it) }
+                profile.deviceToken?.let { put("deviceToken", it) }
             })
         }
         preferences.edit().putString(KEY_PROFILES, array.toString()).apply()
@@ -81,6 +97,7 @@ class ConfigStore(context: Context) {
         private const val KEY_PROFILES = "profiles"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_PACKAGES = "packages"
+        private const val KEY_ACTIVE_CAPTURE = "active_capture"
     }
 }
 

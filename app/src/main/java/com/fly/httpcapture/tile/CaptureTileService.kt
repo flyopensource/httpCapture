@@ -10,6 +10,7 @@ import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
 import com.fly.httpcapture.MainActivity
 import com.fly.httpcapture.config.ConfigStore
+import com.fly.httpcapture.config.ControlClient
 import com.fly.httpcapture.vpn.HttpCaptureVpnService
 import com.fly.httpcapture.vpn.VpnState
 
@@ -23,7 +24,16 @@ class CaptureTileService : TileService() {
     override fun onClick() {
         super.onClick()
         if (VpnState.running) {
+            val settings = ConfigStore(this).load()
+            val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
+            val captureId = settings.activeCaptureId
             startService(HttpCaptureVpnService.stopIntent(this))
+            if (profile != null && captureId != null && ControlClient.canControl(profile)) {
+                Thread {
+                    runCatching { ControlClient.stop(profile, captureId) }
+                        .onSuccess { ConfigStore(this).saveActiveCapture(null) }
+                }.start()
+            }
             refresh(false)
             return
         }
@@ -36,6 +46,19 @@ class CaptureTileService : TileService() {
             } else {
                 @Suppress("DEPRECATION") startActivityAndCollapse(intent)
             }
+            return
+        }
+        val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
+        if (profile != null && ControlClient.canControl(profile)) {
+            Thread {
+                runCatching {
+                    val result = ControlClient.start(profile, settings.selectedPackages, Build.MODEL)
+                    ConfigStore(this).saveActiveCapture(result.captureId)
+                    ContextCompat.startForegroundService(this, HttpCaptureVpnService.startIntent(this))
+                    ControlClient.confirm(profile, result.captureId)
+                }
+            }.start()
+            refresh(true)
             return
         }
         ContextCompat.startForegroundService(this, HttpCaptureVpnService.startIntent(this))

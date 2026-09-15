@@ -64,6 +64,7 @@ import com.fly.httpcapture.config.CaptureProfile
 import com.fly.httpcapture.config.CaptureSettings
 import com.fly.httpcapture.config.CertificateUtils
 import com.fly.httpcapture.config.ConfigStore
+import com.fly.httpcapture.config.ControlClient
 import com.fly.httpcapture.config.PairingCodec
 import com.fly.httpcapture.config.PairingClient
 import com.fly.httpcapture.config.ProfileAddress
@@ -104,6 +105,7 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             runningState = intent?.getBooleanExtra(VpnState.EXTRA_RUNNING, false) ?: false
             intent?.getStringExtra(VpnState.EXTRA_ERROR)?.let { messageState = it }
+            if (runningState) confirmDesktopCaptureIfNeeded()
         }
     }
 
@@ -187,6 +189,25 @@ class MainActivity : ComponentActivity() {
             messageState = "请先选择至少一个应用"
             return
         }
+        val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
+        if (profile != null && ControlClient.canControl(profile)) {
+            lifecycleScope.launch {
+                runCatching {
+                    messageState = "正在通知电脑开始记录…"
+                    val result = withContext(Dispatchers.IO) {
+                        ControlClient.start(profile, settings.selectedPackages, Build.MODEL ?: "Android")
+                    }
+                    store.saveActiveCapture(result.captureId)
+                    reload()
+                    messageState = "电脑端已创建会话 ${result.captureId}，正在启动 VPN…"
+                    val prepare = VpnService.prepare(this@MainActivity)
+                    if (prepare != null) vpnPermission.launch(prepare) else startVpn()
+                }.onFailure {
+                    messageState = "电脑端开始记录失败：${it.message}。VPN 未启动"
+                }
+            }
+            return
+        }
         val prepare = VpnService.prepare(this)
         if (prepare != null) vpnPermission.launch(prepare) else startVpn()
     }
@@ -199,7 +220,38 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopVpn() {
+        val settings = store.load()
+        val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId }
+        val captureId = settings.activeCaptureId
         startService(HttpCaptureVpnService.stopIntent(this))
+        if (profile != null && captureId != null && ControlClient.canControl(profile)) {
+            lifecycleScope.launch {
+                runCatching {
+                    messageState = "手机 VPN 已停止，正在通知电脑归档…"
+                    withContext(Dispatchers.IO) { ControlClient.stop(profile, captureId) }
+                    store.saveActiveCapture(null)
+                    reload()
+                    messageState = "抓包已停止并归档"
+                }.onFailure {
+                    messageState = "手机 VPN 已停止，但电脑端状态未知：${it.message}"
+                }
+            }
+        }
+    }
+
+    private fun confirmDesktopCaptureIfNeeded() {
+        val settings = store.load()
+        val captureId = settings.activeCaptureId ?: return
+        val profile = settings.profiles.firstOrNull { it.id == settings.activeProfileId } ?: return
+        if (!ControlClient.canControl(profile)) return
+        lifecycleScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { ControlClient.confirm(profile, captureId) }
+                messageState = "VPN 已连接，电脑端正在记录 $captureId"
+            }.onFailure {
+                messageState = "VPN 已连接，但电脑端确认失败：${it.message}"
+            }
+        }
     }
 
     private fun installCertificate(profile: CaptureProfile) {
@@ -265,6 +317,11 @@ class MainActivity : ComponentActivity() {
                                 } else {
                                     Text("${active.name}  ·  ${active.engine.displayName}")
                                     Text("地址：${active.host}:${active.port}", style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        if (ControlClient.canControl(active)) "模式：App 联动 CLI 记录" else "模式：仅启动 VPN 转发",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (ControlClient.canControl(active)) Color(0xFF15803D) else Color(0xFF64748B),
+                                    )
                                     Text(
                                         "CA SHA-256：${active.certificateSha256.chunked(2).joinToString(":")}",
                                         style = MaterialTheme.typography.bodySmall,
