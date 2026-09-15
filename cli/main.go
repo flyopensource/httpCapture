@@ -91,6 +91,8 @@ func main() {
 		err = webCommand(os.Args[2:])
 	case "serve":
 		err = serveCommand(os.Args[2:])
+	case "control":
+		err = controlCommand(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("httpcapture", version)
 		return
@@ -123,6 +125,8 @@ func usage() {
   httpcapture export --input session.xml|session.har --output filtered.xml|filtered.har [--from-ms N] [--to-ms N] [--client-ip IP]
   httpcapture web [--host 127.0.0.1] [--port 9080] [--sessions DIR] [--no-open]
   httpcapture serve [--web-port 9080] [--sessions DIR] [--no-open] [--control-host IP] [--control-port 39000] [--pair]
+  httpcapture control devices [--all] [--json]
+  httpcapture control revoke (--device-id ID | --profile-id ID)
 
 record start 默认前台驻留；Ctrl+C 会安全停止当前会话。
 serve 默认仅提供回环 Web；显式传入 --control-host 后开放受认证的 APK 控制 HTTPS。

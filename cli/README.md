@@ -242,6 +242,18 @@ httpcapture serve \
 | `--uri-out` | 空 | 将 v4 配对 URI 写入文件，主要用于自动化测试 |
 | `--terminal-qr` | `auto` | `auto`、`always` 或 `never` |
 
+### 管理已配对设备
+
+每次 `serve --control-host ... --pair` 会给扫码手机签发一组独立控制凭据。旧手机、测试模拟器或遗失设备不再使用时，可以在电脑端撤销：
+
+```bash
+httpcapture control devices
+httpcapture control devices --all
+httpcapture control revoke --device-id device-...
+```
+
+`devices` 不显示设备 token 或 token 摘要；撤销后，该设备的旧 APK 配置不能继续调用控制接口，需要重新扫码配对。
+
 ## Charles 录制
 
 先在 Charles 的 `Proxy Settings > Web Interface` 启用 Web Interface。

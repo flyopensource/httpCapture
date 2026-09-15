@@ -117,6 +117,45 @@ func TestControlApplicationAuthenticatesAndRunsCaptureLifecycle(t *testing.T) {
 	}
 }
 
+func TestControlDevicesListAndRevoke(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	device, token, err := createControlDevice("Pixel", engineProxify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, ok, err := findControlDeviceByToken(token); err != nil || !ok || found.DeviceID != device.DeviceID || found.LastSeenMS == 0 {
+		t.Fatalf("find did not update lastSeen: found=%+v ok=%v err=%v", found, ok, err)
+	}
+	var list bytes.Buffer
+	if err := controlDevicesCommand(nil, &list); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list.String(), device.DeviceID) || strings.Contains(list.String(), device.TokenSHA256) {
+		t.Fatalf("device list missing id or leaked token digest: %s", list.String())
+	}
+	var revoke bytes.Buffer
+	if err := controlRevokeCommand([]string{"--device-id", device.DeviceID}, &revoke); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := findControlDeviceByToken(token); err != nil || ok {
+		t.Fatalf("revoked device still authenticates: ok=%v err=%v", ok, err)
+	}
+	var activeOnly bytes.Buffer
+	if err := controlDevicesCommand(nil, &activeOnly); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(activeOnly.String(), device.DeviceID) {
+		t.Fatalf("revoked device shown without --all: %s", activeOnly.String())
+	}
+	var all bytes.Buffer
+	if err := controlDevicesCommand([]string{"--all"}, &all); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(all.String(), "revoked") || !strings.Contains(all.String(), device.DeviceID) {
+		t.Fatalf("revoked device not shown with --all: %s", all.String())
+	}
+}
+
 func performControlRequest(app http.Handler, method, path, token string, body any) *httptest.ResponseRecorder {
 	var buffer bytes.Buffer
 	if body != nil {

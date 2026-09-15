@@ -158,6 +158,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        intent?.getStringExtra(CaptureTileService.EXTRA_MESSAGE)
+            ?.takeIf(String::isNotBlank)
+            ?.let { messageState = it }
         if (intent?.action == Intent.ACTION_VIEW) intent.dataString?.let(::importPairing)
     }
 
