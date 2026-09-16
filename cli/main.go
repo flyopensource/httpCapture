@@ -124,12 +124,12 @@ func usage() {
   httpcapture record status
   httpcapture export --input session.xml|session.har --output filtered.xml|filtered.har [--from-ms N] [--to-ms N] [--client-ip IP]
   httpcapture web [--host 127.0.0.1] [--port 9080] [--sessions DIR] [--no-open]
-  httpcapture serve [--web-port 9080] [--sessions DIR] [--no-open] [--control-host IP] [--control-port 39000] [--pair]
+  httpcapture serve [--web-port 9080] [--sessions DIR] [--no-open] [--no-pair] [--control-host IP] [--control-port 39000]
   httpcapture control devices [--all] [--json]
   httpcapture control revoke (--device-id ID | --profile-id ID)
 
 record start 默认前台驻留；Ctrl+C 会安全停止当前会话。
-serve 默认仅提供回环 Web；显式传入 --control-host 后开放受认证的 APK 控制 HTTPS。
+serve 默认自动识别局域网 IP、生成 APK 配对二维码，并开放受认证的 APK 控制 HTTPS；仅本机 Web 查看时使用 --no-pair。
 record 默认使用 Proxify。Charles 模式需要显式指定 --engine charles；--clear 只适用于 Charles，且会先备份 .chls。
 `)
 	os.Exit(0)

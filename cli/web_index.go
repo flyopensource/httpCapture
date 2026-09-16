@@ -33,9 +33,16 @@ const (
 )
 
 type webIndex struct {
-	root string
-	db   *sql.DB
-	mu   sync.RWMutex
+	root              string
+	db                *sql.DB
+	mu                sync.RWMutex
+	liveSourceAllowed func(sessionState) bool
+}
+
+type trafficScanOptions struct {
+	startOffset int64
+	startMS     int64
+	clientIP    string
 }
 
 type indexedSession struct {
@@ -162,7 +169,7 @@ func openWebIndex(root string) (*webIndex, error) {
 		return nil, err
 	}
 	database.SetMaxOpenConns(1)
-	index := &webIndex{root: absolute, db: database}
+	index := &webIndex{root: absolute, db: database, liveSourceAllowed: isCurrentActiveSession}
 	if err := index.initialize(); err != nil {
 		_ = database.Close()
 		return nil, err
@@ -280,7 +287,7 @@ func (index *webIndex) rescan(ctx context.Context) error {
 			continue
 		}
 		seen[entry.Name()] = true
-		trafficPath := filepath.Join(directory, "traffic.jsonl")
+		trafficPath, scanOptions := index.sessionTrafficSource(directory, metadata)
 		trafficInfo, trafficErr := regularFileInfo(trafficPath)
 		if trafficErr != nil && !errors.Is(trafficErr, os.ErrNotExist) {
 			trafficInfo = nil
@@ -309,7 +316,7 @@ func (index *webIndex) rescan(ctx context.Context) error {
 			return err
 		}
 		if trafficChanged {
-			if err := index.updateTraffic(ctx, entry.Name(), trafficPath, trafficInfo, previous, exists); err != nil {
+			if err := index.updateTraffic(ctx, entry.Name(), trafficPath, trafficInfo, previous, exists, scanOptions); err != nil {
 				if updateErr := index.setIndexError(ctx, entry.Name(), err.Error()); updateErr != nil {
 					return updateErr
 				}
@@ -360,7 +367,30 @@ func (index *webIndex) upsertSession(ctx context.Context, id, directory string, 
 }
 
 func (index *webIndex) reindexTraffic(ctx context.Context, sessionID, trafficPath string, trafficInfo os.FileInfo) error {
-	return index.rebuildTraffic(ctx, sessionID, trafficPath, trafficInfo)
+	return index.rebuildTraffic(ctx, sessionID, trafficPath, trafficInfo, trafficScanOptions{})
+}
+
+func (index *webIndex) sessionTrafficSource(directory string, metadata sessionState) (string, trafficScanOptions) {
+	if metadata.Engine == engineProxify && metadata.Status == "recording" &&
+		metadata.TrafficSource != "" && index.liveSourceAllowed != nil && index.liveSourceAllowed(metadata) {
+		return metadata.TrafficSource, trafficScanOptions{
+			startOffset: metadata.StartOffset,
+			startMS:     metadata.StartedMS,
+			clientIP:    metadata.ClientIP,
+		}
+	}
+	return filepath.Join(directory, "traffic.jsonl"), trafficScanOptions{}
+}
+
+func isCurrentActiveSession(metadata sessionState) bool {
+	active, err := readState()
+	if err != nil {
+		return false
+	}
+	return active.Status == "recording" && active.CaptureID == metadata.CaptureID &&
+		filepath.Clean(active.SessionDir) == filepath.Clean(metadata.SessionDir) &&
+		active.TrafficSource == metadata.TrafficSource && active.StartOffset == metadata.StartOffset &&
+		active.StartedMS == metadata.StartedMS && active.ClientIP == metadata.ClientIP
 }
 
 func insertIndexedRequest(ctx context.Context, transaction *sql.Tx, sessionID string, lineNumber int, offset, length int64, captured capturedTransaction) error {
@@ -635,9 +665,11 @@ func (index *webIndex) requestTransaction(ctx context.Context, sessionID string,
 	}
 	var directory string
 	var offset, length int64
-	err := index.db.QueryRowContext(ctx, `SELECT s.directory, r.byte_offset, r.byte_length
+	var device, inode uint64
+	err := index.db.QueryRowContext(ctx, `SELECT s.directory, r.byte_offset, r.byte_length, c.device, c.inode
 		FROM requests r JOIN sessions s ON s.id = r.session_id
-		WHERE r.session_id = ? AND r.id = ?`, sessionID, requestID).Scan(&directory, &offset, &length)
+		JOIN traffic_cursors c ON c.session_id = r.session_id
+		WHERE r.session_id = ? AND r.id = ?`, sessionID, requestID).Scan(&directory, &offset, &length, &device, &inode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return capturedTransaction{}, os.ErrNotExist
 	}
@@ -647,11 +679,8 @@ func (index *webIndex) requestTransaction(ctx context.Context, sessionID string,
 	if length <= 0 || length > maxIndexableJSONLine {
 		return capturedTransaction{}, errors.New("请求记录过大，无法在页面中打开")
 	}
-	trafficPath := filepath.Join(directory, "traffic.jsonl")
-	if err := ensurePathWithin(index.root, trafficPath); err != nil {
-		return capturedTransaction{}, err
-	}
-	if _, err := regularFileInfo(trafficPath); err != nil {
+	trafficPath, err := index.indexedTrafficPath(directory, device, inode)
+	if err != nil {
 		return capturedTransaction{}, err
 	}
 	file, err := os.Open(trafficPath)
@@ -668,6 +697,32 @@ func (index *webIndex) requestTransaction(ctx context.Context, sessionID string,
 		return capturedTransaction{}, fmt.Errorf("请求原始记录已变化，请重新索引: %w", err)
 	}
 	return captured, nil
+}
+
+func (index *webIndex) indexedTrafficPath(directory string, expectedDevice, expectedInode uint64) (string, error) {
+	archivePath := filepath.Join(directory, "traffic.jsonl")
+	if err := ensurePathWithin(index.root, archivePath); err != nil {
+		return "", err
+	}
+	candidates := []string{archivePath}
+	metadataPath := filepath.Join(directory, "meta.json")
+	if content, err := readLimitedFile(metadataPath, maxSessionMetadataSize); err == nil {
+		var metadata sessionState
+		if json.Unmarshal(content, &metadata) == nil && metadata.Engine == engineProxify && filepath.IsAbs(metadata.TrafficSource) {
+			candidates = append(candidates, metadata.TrafficSource)
+		}
+	}
+	for _, path := range candidates {
+		info, err := regularFileInfo(path)
+		if err != nil {
+			continue
+		}
+		device, inode, known := sourceDeviceInode(info)
+		if known && device == expectedDevice && inode == expectedInode {
+			return path, nil
+		}
+	}
+	return "", errors.New("请求原始记录已变化，请等待重新索引")
 }
 
 func (index *webIndex) requestDetail(ctx context.Context, sessionID string, requestID int64) (requestDetail, error) {

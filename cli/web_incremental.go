@@ -24,13 +24,13 @@ type trafficCursor struct {
 	tailHash      string
 }
 
-func (index *webIndex) updateTraffic(ctx context.Context, id, path string, info os.FileInfo, previous sourceFingerprint, exists bool) error {
+func (index *webIndex) updateTraffic(ctx context.Context, id, path string, info os.FileInfo, previous sourceFingerprint, exists bool, options trafficScanOptions) error {
 	if info == nil || !exists || info.Size() <= previous.TrafficSize {
-		return index.rebuildTraffic(ctx, id, path, info)
+		return index.rebuildTraffic(ctx, id, path, info, options)
 	}
 	cursor, err := index.loadTrafficCursor(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return index.rebuildTraffic(ctx, id, path, info)
+		return index.rebuildTraffic(ctx, id, path, info, options)
 	}
 	if err != nil {
 		return err
@@ -46,24 +46,27 @@ func (index *webIndex) updateTraffic(ctx context.Context, id, path string, info 
 	}
 	device, inode, known := sourceDeviceInode(opened)
 	if !known || !os.SameFile(info, opened) || cursor.device != device || cursor.inode != inode || opened.Size() < cursor.offset {
-		return index.rebuildTraffic(ctx, id, path, info)
+		return index.rebuildTraffic(ctx, id, path, info, options)
 	}
 	head, tail, err := trafficWindowHashes(file, cursor.offset)
 	if err != nil {
 		return err
 	}
 	if head != cursor.headHash || tail != cursor.tailHash {
-		return index.rebuildTraffic(ctx, id, path, info)
+		return index.rebuildTraffic(ctx, id, path, info, options)
 	}
 	return index.scanTraffic(ctx, id, file, trafficCursor{
 		device: device, inode: inode, offset: cursor.offset,
 		lineNumber: cursor.lineNumber, skipped: cursor.skipped,
-	}, false)
+	}, false, options)
 }
 
-func (index *webIndex) rebuildTraffic(ctx context.Context, id, path string, info os.FileInfo) error {
+func (index *webIndex) rebuildTraffic(ctx context.Context, id, path string, info os.FileInfo, options trafficScanOptions) error {
 	if info == nil {
-		return index.scanTraffic(ctx, id, nil, trafficCursor{}, true)
+		return index.scanTraffic(ctx, id, nil, trafficCursor{}, true, options)
+	}
+	if options.startOffset < 0 || options.startOffset > info.Size() {
+		return errors.New("实时抓包文件偏移无效")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -78,7 +81,9 @@ func (index *webIndex) rebuildTraffic(ctx context.Context, id, path string, info
 		return errors.New("抓包文件扫描时已替换，请重试")
 	}
 	device, inode, _ := sourceDeviceInode(opened)
-	return index.scanTraffic(ctx, id, file, trafficCursor{device: device, inode: inode}, true)
+	return index.scanTraffic(ctx, id, file, trafficCursor{
+		device: device, inode: inode, offset: options.startOffset,
+	}, true, options)
 }
 
 func (index *webIndex) loadTrafficCursor(ctx context.Context, id string) (trafficCursor, error) {
@@ -89,7 +94,7 @@ func (index *webIndex) loadTrafficCursor(ctx context.Context, id string) (traffi
 	return cursor, err
 }
 
-func (index *webIndex) scanTraffic(ctx context.Context, id string, file *os.File, cursor trafficCursor, reset bool) error {
+func (index *webIndex) scanTraffic(ctx context.Context, id string, file *os.File, cursor trafficCursor, reset bool, options trafficScanOptions) error {
 	transaction, err := index.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -127,8 +132,11 @@ func (index *webIndex) scanTraffic(ctx context.Context, id string, file *os.File
 					var captured capturedTransaction
 					if err := json.Unmarshal(line, &captured); err != nil || captured.SchemaVersion != captureSchemaVersion {
 						cursor.skipped++
-					} else if err := insertIndexedRequest(ctx, transaction, id, cursor.lineNumber, cursor.offset, consumed, captured); err != nil {
-						return err
+					} else if (options.startMS == 0 || captured.TimestampMillis >= options.startMS) &&
+						(options.clientIP == "" || clientAddressMatches(captured.ClientAddress, options.clientIP)) {
+						if err := insertIndexedRequest(ctx, transaction, id, cursor.lineNumber, cursor.offset, consumed, captured); err != nil {
+							return err
+						}
 					}
 				}
 				cursor.offset += consumed

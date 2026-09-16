@@ -12,6 +12,45 @@ httpcapture version
 
 不希望安装到系统目录时，也可以直接执行 `./httpcapture-linux-amd64`。
 
+## 推荐：APK 一键联动抓包
+
+日常开发建议直接使用 `serve`。电脑端保持 CLI 前台运行，APK 扫码后可以通过主按钮或快捷磁贴直接控制 CLI 创建、停止并归档抓包会话。
+
+```bash
+httpcapture serve
+```
+
+需要固定控制端口时：
+
+```bash
+httpcapture serve --control-port 39000
+```
+
+说明：
+
+- CLI 默认自动识别手机能访问到的电脑局域网 IP。
+- 自动识别错误时，再用 `--control-host 192.168.1.10` 覆盖。
+- 本地 Web 查看器仍只监听 `127.0.0.1`，不会暴露到局域网。
+- 手机控制接口使用独立 HTTPS 身份和逐设备 token。
+- Proxify 是默认引擎；如果受管 Proxify 未运行，`serve` 会尝试启动。
+- 停止一次抓包会话不会停止 Proxify 代理进程。
+
+如果终端二维码太大或显示错位，关闭终端二维码并使用 PNG：
+
+```bash
+httpcapture serve --terminal-qr never --out pair.png
+```
+
+APK 侧流程：
+
+1. 扫码导入 v4 配置，APK 自动下载代理配置和 CA。
+2. 按提示安装 CA。
+3. 选择一个或多个目标 App，支持应用名和包名模糊搜索。
+4. 点击“开始抓包”或使用系统快捷磁贴。
+5. 停止后在 `~/httpcapture-sessions/<captureId>/` 查看 `meta.json`、`traffic.jsonl` 和 `session.har`。
+
+完整用户流程见仓库根目录 [USAGE.md](../USAGE.md)。
+
 ## 内嵌 Proxify
 
 启动、查询和停止默认代理：
@@ -136,7 +175,7 @@ httpcapture pair --host 192.168.1.10 --serve-port 39001
 - APK 提示配置校验失败：二维码对应的会话已不可用，应重新运行 `pair` 并扫码。
 - CLI 提示二维码过期：APK 未在超时前确认导入，重新运行即可。
 
-普通 `httpcapture pair` 仍用于只导入代理和 CA 的 v3 配置，不具备 APK 控制 CLI 会话能力。需要一键联动记录时，请使用下文的 `httpcapture serve --control-host ... --pair` 生成 v4 配置。开发阶段不迁移旧的本地代理配置，本机已有旧配置时请重新扫码。
+普通 `httpcapture pair` 仍用于只导入代理和 CA 的 v3 配置，不具备 APK 控制 CLI 会话能力。需要一键联动记录时，请使用下文的 `httpcapture serve` 生成 v4 配置。开发阶段不迁移旧的本地代理配置，本机已有旧配置时请重新扫码。
 
 ### 构建 Linux AMD64
 
@@ -210,30 +249,29 @@ httpcapture web --sessions /path/to/httpcapture-sessions --no-open
 ```bash
 httpcapture serve
 httpcapture serve --web-port 0 --no-open
-httpcapture serve \
-  --control-host 192.168.1.10 \
-  --control-port 39000 \
-  --pair
+httpcapture serve --control-host 192.168.1.10
+httpcapture serve --no-pair
 ```
 
 `serve` 在前台持续显示服务和会话状态，同时启动只监听 `127.0.0.1` 的本地 Web。单次会话停止后服务继续运行；按 `Ctrl+C` 时会检查活动会话并走正常停止/归档流程。
 
-默认情况下 `serve` 不开放手机控制端口。需要 APK 主按钮/快捷磁贴直接控制 CLI 记录时，显式传入 `--control-host`：
+默认情况下 `serve` 会自动识别局域网 IP、开放受认证手机控制接口，并生成一次性 v4 配对二维码。只想启动本机 Web 查看器时，使用 `--no-pair`：
 
 - 本地 Web 仍只监听 `127.0.0.1`，不会暴露到局域网。
 - 手机控制接口使用独立 HTTPS 身份，二维码 v4 会携带控制服务证书 SHA-256，APK 下载配置和后续控制请求都会校验该指纹。
 - 控制接口只提供状态、开始会话、VPN 已启动确认、停止/放弃会话，不提供 Web 数据查看、HAR 下载或任意命令执行。
-- `--pair` 会生成一次性 v4 配对二维码，配置包内包含代理 CA 公钥证书、控制服务地址和本设备 token；代理 CA 私钥不会进入二维码或配置包。
-- Proxify 模式下，`serve --control-host ... --pair` 会确保受管 Proxify 已运行；停止抓包会话不会停止 Proxify 进程。
+- 配置包内包含代理 CA 公钥证书、控制服务地址和本设备 token；代理 CA 私钥不会进入二维码或配置包。
+- Proxify 模式下，`serve` 会确保受管 Proxify 已运行；停止抓包会话不会停止 Proxify 进程。
 - APK 回到前台会查询 CLI 状态并提示不一致；联动开始失败时不会静默启动 VPN，用户必须显式选择“仅启动 VPN”。VPN 启动失败时，APK 会请求 CLI 放弃 starting 会话；CLI 标记为 `abandoned`，不会导出为 completed 会话。
 
 常用参数：
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--control-host` | 空 | 手机可访问的局域网 IP；为空则只运行本机 Web |
+| `--no-pair` | `false` | 仅启动本机 Web，不开放手机控制接口、不生成二维码 |
+| `--control-host` | 自动识别 | 手机可访问的局域网 IP；自动识别错误时手动覆盖 |
 | `--control-port` | `39000` | 手机控制 HTTPS 端口；`0` 表示自动选择 |
-| `--pair` | `false` | 打印并写出 v4 配对二维码 |
+| `--pair` | `true` | 打印并写出 v4 配对二维码；保留该参数用于兼容旧命令 |
 | `--engine` | `proxify` | 联动抓包引擎：当前支持 `proxify`、`charles` |
 | `--proxy-port` | 按引擎 | 手机实际连接的代理端口 |
 | `--cert` | 自动查找 | 代理 CA 公钥证书，自动查找失败时需要手动指定 |
@@ -244,7 +282,7 @@ httpcapture serve \
 
 ### 管理已配对设备
 
-每次 `serve --control-host ... --pair` 会给扫码手机签发一组独立控制凭据。旧手机、测试模拟器或遗失设备不再使用时，可以在电脑端撤销：
+每次 `serve` 会给扫码手机签发一组独立控制凭据。旧手机、测试模拟器或遗失设备不再使用时，可以在电脑端撤销：
 
 ```bash
 httpcapture control devices

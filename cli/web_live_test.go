@@ -37,6 +37,89 @@ func appendWebTestTraffic(t *testing.T, path string, transactions []capturedTran
 	}
 }
 
+func TestWebIndexReadsActiveProxifySourceThenSwitchesToArchive(t *testing.T) {
+	root := t.TempDir()
+	id := "session-active-proxify"
+	directory := filepath.Join(root, id)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "proxify-runtime.jsonl")
+	if err := os.WriteFile(source, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := webTestTransaction(1000, "GET", "https://api.test/old", 200, 1, "text/plain", capturedPayload{})
+	old.ClientAddress = "192.0.2.10:1000"
+	appendWebTestTraffic(t, source, []capturedTransaction{old}, true)
+	start, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := sessionState{
+		CaptureID: id, Engine: engineProxify, EngineVersion: "test", Packages: []string{"com.example.app"},
+		ClientIP: "192.0.2.10", StartedMS: 2000, Status: "recording", SessionDir: directory,
+		TrafficSource: source, StartOffset: start.Size(),
+	}
+	if err := writeSessionMetadata(state); err != nil {
+		t.Fatal(err)
+	}
+	first := webTestTransaction(3000, "GET", "https://api.test/first", 200, 1, "text/plain", capturedPayload{})
+	first.ClientAddress = "192.0.2.10:3000"
+	other := webTestTransaction(3001, "GET", "https://api.test/other-device", 200, 1, "text/plain", capturedPayload{})
+	other.ClientAddress = "192.0.2.11:3001"
+	appendWebTestTraffic(t, source, []capturedTransaction{first, other}, true)
+
+	index, err := openWebIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.close()
+	index.liveSourceAllowed = func(candidate sessionState) bool { return candidate.CaptureID == id }
+	check := func(want int) requestPage {
+		t.Helper()
+		if err := index.rescan(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		page, err := index.listRequests(context.Background(), requestQuery{SessionID: id})
+		if err != nil || page.Total != want {
+			t.Fatalf("active requests=%d want=%d err=%v", page.Total, want, err)
+		}
+		return page
+	}
+	page := check(1)
+	if !strings.Contains(page.Items[0].URL, "/first") {
+		t.Fatalf("pre-session or other-device request leaked into active session: %+v", page.Items)
+	}
+	if detail, err := index.requestDetail(context.Background(), id, page.Items[0].ID); err != nil || detail.URL != first.Request.URL {
+		t.Fatalf("active request detail=%+v err=%v", detail, err)
+	}
+
+	second := webTestTransaction(4000, "POST", "https://api.test/second", 201, 2, "application/json", capturedPayload{})
+	second.ClientAddress = "192.0.2.10:4000"
+	appendWebTestTraffic(t, source, []capturedTransaction{second}, true)
+	check(2)
+
+	end, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trafficPath := filepath.Join(directory, "traffic.jsonl")
+	count, _, err := extractCapturedTransactions(source, trafficPath, state.StartOffset, end.Size(), state.StartedMS, 5000, state.ClientIP)
+	if err != nil || count != 2 {
+		t.Fatalf("archive count=%d err=%v", count, err)
+	}
+	state.Status = "completed"
+	state.StoppedMS = 5000
+	state.RequestCount = count
+	if err := writeSessionMetadata(state); err != nil {
+		t.Fatal(err)
+	}
+	page = check(2)
+	if detail, err := index.requestDetail(context.Background(), id, page.Items[0].ID); err != nil || detail.URL != second.Request.URL {
+		t.Fatalf("archived request detail=%+v err=%v", detail, err)
+	}
+}
+
 func TestWebIncrementalAppendHalfLineCorruptTruncateAndReplace(t *testing.T) {
 	root := t.TempDir()
 	id := "session-live"

@@ -7,6 +7,7 @@
 ```kotlin
 dependencies {
     debugImplementation(files("libs/httpcapture-debug-trust.aar"))
+    "alphaImplementation"(files("libs/httpcapture-debug-trust.aar"))
 }
 ```
 
@@ -16,9 +17,9 @@ dependencies {
 debugImplementation(project(":debug-trust"))
 ```
 
-不要添加 `releaseImplementation`。Release APK 中不应出现 `com.fly.httpcapture.DEBUG_TRUST` 元数据，也不应合并 `httpcapture_network_security_config.xml`。
+不要添加 `releaseImplementation`。Release APK 中不应出现 `com.fly.httpcapture.DEBUG_TRUST` 元数据，也不应合并 SDK 的 `network_security_config.xml`。
 
-如果业务 App 已有 `android:networkSecurityConfig`，Manifest 合并会冲突。此时保留业务配置，并仅在业务的 Debug 资源中合入：
+如果业务 App 已有 `android:networkSecurityConfig` 且使用其他资源名，Manifest 合并会冲突。此时保留业务配置，并仅在业务的 Debug 资源中合入：
 
 ```xml
 <debug-overrides>

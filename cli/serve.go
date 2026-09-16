@@ -16,17 +16,15 @@ import (
 	"time"
 )
 
-// serve is deliberately loopback-only until pairing v4 and authenticated App
-// control are complete. It already owns the local Web viewer and session
-// lifecycle, without creating an unauthenticated LAN endpoint.
 func serveCommand(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	port := flags.Int("web-port", 9080, "本地 Web 查看器端口；0 表示自动选择")
 	sessionsRoot := flags.String("sessions", "", "抓包会话根目录")
 	noOpen := flags.Bool("no-open", false, "启动后不自动打开浏览器")
-	controlHost := flags.String("control-host", "", "手机可访问的局域网 IP；为空则不开放手机控制接口")
+	noPair := flags.Bool("no-pair", false, "仅启动本机 Web，不开放手机控制接口")
+	controlHost := flags.String("control-host", "", "手机可访问的局域网 IP；默认自动识别")
 	controlPort := flags.Int("control-port", 39000, "手机控制接口 HTTPS 端口；0 表示自动选择")
-	controlPair := flags.Bool("pair", false, "启动手机控制接口时打印一次性 v4 配对二维码")
+	controlPair := flags.Bool("pair", true, "打印一次性 v4 配对二维码")
 	controlEngine := flags.String("engine", engineProxify, "手机联动使用的代理引擎：proxify 或 charles")
 	var proxyPort optionalPort
 	flags.Var(&proxyPort, "proxy-port", "手机代理端口；Proxify/Charles 默认 8888")
@@ -40,12 +38,15 @@ func serveCommand(args []string) error {
 		return err
 	}
 	if flags.NArg() != 0 || *port < 0 || *port > 65535 || *controlPort < 0 || *controlPort > 65535 {
-		return errors.New("serve 用法: [--web-port 0..65535] [--sessions DIR] [--no-open] [--control-host IP] [--control-port 39000] [--pair]")
+		return errors.New("serve 用法: [--web-port 0..65535] [--sessions DIR] [--no-open] [--no-pair] [--control-host IP] [--control-port 39000]")
+	}
+	if *noPair {
+		if strings.TrimSpace(*controlHost) != "" {
+			return errors.New("--no-pair 与 --control-host 不能同时使用")
+		}
+		*controlPair = false
 	}
 	*controlEngine = strings.ToLower(strings.TrimSpace(*controlEngine))
-	if *controlHost != "" && *controlEngine != engineProxify && *controlEngine != engineCharles {
-		return errors.New("--engine 仅支持 proxify 或 charles 联动")
-	}
 	if !proxyPort.set {
 		proxyPort.value = defaultProxyPort(*controlEngine)
 	}
@@ -91,8 +92,15 @@ func serveCommand(args []string) error {
 	fmt.Println("httpcapture serve 已启动；本地 Web:", webURL)
 	fmt.Println("会话目录:", index.root)
 	var controlServer *http.Server
-	if *controlHost == "" {
-		fmt.Println("当前仅监听本机回环地址；如需 APK 联动，使用 --control-host 指定手机可访问 IP。")
+	resolvedControlHost, controlEnabled, err := resolveServeControlHost(*controlHost, *controlPair)
+	if err != nil {
+		return err
+	}
+	if controlEnabled && *controlEngine != engineProxify && *controlEngine != engineCharles {
+		return errors.New("--engine 仅支持 proxify 或 charles 联动")
+	}
+	if !controlEnabled {
+		fmt.Println("当前仅监听本机回环地址；如需 APK 联动，直接运行 `httpcapture serve`。")
 	} else {
 		if *controlEngine == engineProxify {
 			if err := ensureManagedProxify(proxyPort.value); err != nil {
@@ -105,11 +113,11 @@ func serveCommand(args []string) error {
 		if *certPath == "" {
 			return errors.New("未找到代理 CA；请先启动代理或使用 --cert 指定 CA 公钥证书")
 		}
-		identity, err := loadOrCreateControlIdentity(*controlHost)
+		identity, err := loadOrCreateControlIdentity(resolvedControlHost)
 		if err != nil {
 			return err
 		}
-		controlListener, controlURL, err := listenControlAddress(*controlHost, *controlPort)
+		controlListener, controlURL, err := listenControlAddress(resolvedControlHost, *controlPort)
 		if err != nil {
 			return err
 		}
@@ -122,7 +130,7 @@ func serveCommand(args []string) error {
 		if err != nil {
 			return err
 		}
-		bundle, proxyCA, err := buildControlPairingBundle(*controlEngine, *profileName, *controlHost, proxyPort.value, *certPath, controlURL, identity.SHA256, device, token)
+		bundle, proxyCA, err := buildControlPairingBundle(*controlEngine, *profileName, resolvedControlHost, proxyPort.value, *certPath, controlURL, identity.SHA256, device, token)
 		if err != nil {
 			return err
 		}
@@ -130,8 +138,11 @@ func serveCommand(args []string) error {
 		controlServer = serveControlListener(controlListener, app, identity)
 		fmt.Println("手机控制服务:", controlURL)
 		fmt.Println("控制服务 TLS SHA-256:", identity.SHA256)
-		fmt.Println("代理:", net.JoinHostPort(*controlHost, strconv.Itoa(proxyPort.value)))
+		fmt.Println("代理:", net.JoinHostPort(resolvedControlHost, strconv.Itoa(proxyPort.value)))
 		fmt.Println("代理 CA SHA-256:", proxyCA)
+		if *controlHost == "" {
+			fmt.Println("已自动选择局域网 IP:", resolvedControlHost, "；如不正确，请使用 --control-host 覆盖。")
+		}
 		if *controlPair {
 			uri, err := encodeControlPairingReference(controlURL+"p/"+pairToken, identity.SHA256, bundle)
 			if err != nil {
@@ -148,7 +159,7 @@ func serveCommand(args []string) error {
 			}
 			fmt.Println("等待 APK 扫码导入；serve 会继续保持运行。")
 		} else {
-			fmt.Println("提示: 需要给 APK 配对时，请重新运行并加 --pair。")
+			fmt.Println("提示: 当前未生成新二维码；需要给 APK 配对时，直接运行 `httpcapture serve`。")
 		}
 	}
 	if !*noOpen {
@@ -183,6 +194,25 @@ func serveCommand(args []string) error {
 			return fmt.Errorf("本地 Web 服务中断: %w", err)
 		}
 	}
+}
+
+func resolveServeControlHost(controlHost string, pair bool) (string, bool, error) {
+	return resolveServeControlHostWithDiscover(controlHost, pair, discoverIP)
+}
+
+func resolveServeControlHostWithDiscover(controlHost string, pair bool, discover func() string) (string, bool, error) {
+	controlHost = strings.TrimSpace(controlHost)
+	if controlHost != "" {
+		return controlHost, true, nil
+	}
+	if !pair {
+		return "", false, nil
+	}
+	discovered := discover()
+	if discovered == "" {
+		return "", false, errors.New("无法自动确定局域网 IP，请使用 --control-host 指定手机可访问的电脑 IP")
+	}
+	return discovered, true, nil
 }
 
 func printServeStatus() {

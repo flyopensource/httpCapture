@@ -10,34 +10,51 @@ HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不�
 - `cli`：纯 Go 单文件工具，内嵌 Proxify，负责配对、代理进程、抓包会话、SQLite/FTS5 索引、本地 Web 查看、结构化批量导出、HAR 导出和 Charles 兼容。
 - `native`：固定版本 tun2proxy 的 Android 构建脚本和安全补丁。
 
+最新完整用法见 [USAGE.md](USAGE.md)；CLI 参数细节见 [cli/README.md](cli/README.md)。
+
 ## 快速开始
 
-1. 给 Linux AMD64 CLI 增加执行权限并启动内嵌 Proxify，不需要安装 Go、Python 或额外代理程序：
+推荐使用 V0.4 的 APK 一键联动流程。电脑端保持 `serve` 前台运行，手机端扫码后，APK 主按钮和快捷磁贴可以直接创建、停止并归档电脑端抓包会话。
+
+1. 给 Linux AMD64 CLI 增加执行权限：
 
    ```bash
    chmod +x cli/bin/httpcapture-linux-amd64
-   ./cli/bin/httpcapture-linux-amd64 proxy proxify start
+   ./cli/bin/httpcapture-linux-amd64 version
    ```
 
-2. 生成配对二维码；Proxify 是默认引擎，`--host` 可省略并自动检测局域网 IPv4：
+2. 在电脑启动前台服务并生成 v4 配对二维码；CLI 会自动识别局域网 IP：
 
    ```bash
-   ./cli/bin/httpcapture-linux-amd64 pair \
-     --host 192.168.1.10 \
-     --out pair.png
+   ./cli/bin/httpcapture-linux-amd64 serve
    ```
 
-3. 保持 CLI 运行，在 Android App 中扫码；App 会自动下载并校验代理配置和 CA，成功后 CLI 自动退出。
-4. 按提示安装 CA，然后选择一个或多个应用。
-5. 在电脑执行 `httpcapture record start --package com.example.app`，命令会保持前台；然后在 APK 中开始抓包。
-6. 完成后在前台按 `Ctrl+C` 正常停止/归档，或从另一终端执行 `httpcapture record stop`。会话目录包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
-7. 执行 `httpcapture web`，在只监听本机的页面中搜索、查看和批量导出 Proxify 请求；也可执行 `httpcapture serve`，保持本地 Web 与会话状态前台可见。
+   `serve` 会同时提供本地 Web 查看器和受认证手机控制接口；本地 Web 只监听 `127.0.0.1`。
+
+3. APK 扫码导入，自动下载代理配置和 CA，按提示安装 CA。
+4. 选择一个或多个目标 App；支持按应用名、包名模糊搜索。
+5. 在 APK 点“开始抓包”或使用快捷磁贴。
+6. 停止后，在本机 Web 查看、搜索和导出：
+
+   ```bash
+   ./cli/bin/httpcapture-linux-amd64 web
+   ```
+
+   会话目录为 `~/httpcapture-sessions/<captureId>/`，包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
 
 继续使用 Charles 时无需由 CLI 启动代理，导出 Charles CA 后执行 `httpcapture pair --engine charles`。mitmproxy 作为备用引擎继续保留。
 
-配对二维码只包含有效约 3 分钟的一次性局域网地址和配置包指纹，不包含完整 CA，因此终端显示更小。手机与电脑需要处于可互相访问的局域网；扫码页固定为竖屏。
+如果二维码在终端显示太大或错位，可以关闭终端二维码，只使用 PNG：
 
-`pair` 执行后不会立即退出，这是正常行为：CLI 正在提供一次性配置下载服务。APK 导入成功后 CLI 会自动退出；也可以按 `Ctrl+C` 取消。完整参数、证书查找规则和常见问题见 [CLI 使用文档](cli/README.md)。
+```bash
+./cli/bin/httpcapture-linux-amd64 serve \
+  --terminal-qr never \
+  --out pair.png
+```
+
+如果电脑有多个网卡、VPN、Docker 网卡，自动识别的 IP 不对，再用 `--control-host 192.168.1.10` 手动覆盖。
+
+普通 `pair` 仍可用于只导入代理和 CA 的场景，但它不具备 APK 控制 CLI 会话能力。`pair` 执行后不会立即退出，这是正常行为：CLI 正在提供一次性配置下载服务。APK 导入成功后 CLI 会自动退出；也可以按 `Ctrl+C` 取消。完整参数、证书查找规则和常见问题见 [CLI 使用文档](cli/README.md)。
 
 Android 11 及更高版本禁止普通 App 直接安装 CA。HTTP Capture 会把证书写到 `Downloads/HTTP Capture` 并打开系统安全设置；用户仍需在系统的“安装 CA 证书”页面选择该文件。这是 Android 平台限制，不是 App 权限缺失。
 
@@ -109,6 +126,6 @@ export HTTPCAPTURE_SIGNING_KEY_PASSWORD='从密码管理器读取'
 - 当前内嵌 Proxify 会把 HTTP/2 客户端连接降级为 HTTP/1.1；UDP/QUIC 不是当前目标，HTTPS 客户端通常会回退到 TCP。
 - SSE/长响应可能被缓冲，WebSocket 实测不能可靠透传；当前版本不支持这两类流量。
 
-V0.4 已新增 `serve --control-host ... --pair` 的配对协议 v4。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
+V0.4 已新增 `serve` 默认生成的配对协议 v4。开发阶段不兼容旧的本地代理配置，升级 APK 与 CLI 后应重新扫码。
 
-当前 `serve` 默认仍只提供本机 Web 和前台会话管理；只有显式传入 `--control-host` 才开放受认证的手机控制 HTTPS。APK 导入 v4 配置后，主按钮和快捷磁贴会先通知 CLI 创建记录会话，再启动 VPN，并在停止时先停 VPN 再通知 CLI 归档。联动失败不会静默降级，用户需要在 APK 中显式选择“仅启动 VPN”。
+当前 `serve` 默认提供本机 Web、自动识别局域网 IP、生成 APK 配对二维码，并开放受认证的手机控制 HTTPS；只想查看本机 Web 时使用 `--no-pair`。APK 导入 v4 配置后，主按钮和快捷磁贴会先通知 CLI 创建记录会话，再启动 VPN，并在停止时先停 VPN 再通知 CLI 归档。联动失败不会静默降级，用户需要在 APK 中显式选择“仅启动 VPN”。
