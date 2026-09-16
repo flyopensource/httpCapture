@@ -5,12 +5,14 @@ HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不�
 仓库包含：
 
 - `app`：原生 Kotlin + Compose 控制 App，最低 Android 8.0（API 26）。
-- `debug-trust`：仅供业务 App 的 Debug 构建接入的用户 CA 信任 AAR，最低 API 21。
+- `debug-trust`：仅供业务 App 的 Debug/Alpha 构建通过 Maven 坐标接入的用户 CA 信任 SDK，最低 API 21；无需手工复制 AAR。
 - `sample-client`：HTTP/HTTPS 联调样例。
 - `cli`：纯 Go 单文件工具，内嵌 Proxify，负责配对、代理进程、抓包会话、SQLite/FTS5 索引、本地 Web 查看、结构化批量导出、HAR 导出和 Charles 兼容。
 - `native`：固定版本 tun2proxy 的 Android 构建脚本和安全补丁。
 
 最新完整用法见 [USAGE.md](USAGE.md)；CLI 参数细节见 [cli/README.md](cli/README.md)。
+
+Debug Trust SDK 的远程依赖坐标和接入步骤见 [debug-trust/README.md](debug-trust/README.md)。
 
 ## 快速开始
 

@@ -1,20 +1,37 @@
 # Debug Trust SDK
 
-这个 AAR 只通过 Android Network Security Configuration 让 Debug 构建信任用户安装的 CA，不包含运行时代码，不使用 `TrustAll`。
+这个 SDK 只通过 Android Network Security Configuration 让 Debug 构建信任用户安装的 CA，不包含运行时代码，不使用 `TrustAll`。业务项目通过 Maven 坐标引用，不需要手工构建、复制或提交 AAR 文件。
 
-业务 App 接入：
+在业务项目的 `settings.gradle.kts` 添加 JitPack 仓库：
 
 ```kotlin
-dependencies {
-    debugImplementation(files("libs/httpcapture-debug-trust.aar"))
-    "alphaImplementation"(files("libs/httpcapture-debug-trust.aar"))
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url = uri("https://jitpack.io")
+            content { includeGroup("com.github.flyopensource.httpCapture") }
+        }
+    }
 }
 ```
 
-或在本仓库中：
+只在需要抓包的 Debug 和 Alpha 构建中添加依赖：
 
 ```kotlin
-debugImplementation(project(":debug-trust"))
+dependencies {
+    debugImplementation("com.github.flyopensource.httpCapture:debug-trust:v0.4.0")
+    "alphaImplementation"("com.github.flyopensource.httpCapture:debug-trust:v0.4.0")
+}
+```
+
+同一源码仓库中的样例或本地开发仍可直接使用模块依赖：
+
+```kotlin
+dependencies {
+    debugImplementation(project(":debug-trust"))
+}
 ```
 
 不要添加 `releaseImplementation`。Release APK 中不应出现 `com.fly.httpcapture.DEBUG_TRUST` 元数据，也不应合并 SDK 的 `network_security_config.xml`。

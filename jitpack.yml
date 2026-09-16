@@ -1,0 +1,4 @@
+jdk:
+  - openjdk17
+install:
+  - ./gradlew :debug-trust:publishReleasePublicationToMavenLocal --no-daemon --no-parallel --max-workers=1
