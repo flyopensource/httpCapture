@@ -13,8 +13,13 @@ git -C "$source_dir" checkout --detach "$revision"
 # native/tun2proxy is an ignored, reproducible vendor checkout. Restore only
 # that pinned checkout so this script can be run repeatedly.
 git -C "$source_dir" restore --source="$revision" --staged --worktree -- .
-git -C "$source_dir" apply --check "$repo_root/native/patches/android-no-process-exit.patch"
-git -C "$source_dir" apply "$repo_root/native/patches/android-no-process-exit.patch"
+for patch in \
+  "$repo_root/native/patches/android-no-process-exit.patch" \
+  "$repo_root/native/patches/virtual-dns-stable-mapping.patch"
+do
+  git -C "$source_dir" apply --unidiff-zero --check "$patch"
+  git -C "$source_dir" apply --unidiff-zero "$patch"
+done
 
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_HOME:-$HOME/Android/Sdk}/ndk/29.0.14206865}"
 cd "$source_dir"

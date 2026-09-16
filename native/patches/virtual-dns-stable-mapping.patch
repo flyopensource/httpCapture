@@ -1,0 +1,49 @@
+diff --git a/src/virtual_dns.rs b/src/virtual_dns.rs
+index 7794d37..d1af7aa 100644
+--- a/src/virtual_dns.rs
++++ b/src/virtual_dns.rs
+@@ -7 +6,0 @@ use std::{
+-    time::{Duration, Instant},
+@@ -11,2 +9,0 @@ use tproxy_config::IpCidr;
+-const MAPPING_TIMEOUT: u64 = 60; // Mapping timeout in seconds
+-
+@@ -15 +11,0 @@ struct NameCacheEntry {
+-    expiry: Instant,
+@@ -80,3 +76,3 @@ impl VirtualDns {
+-    // This is to be called whenever we receive or send a packet on the socket
+-    // which connects the tun interface to the client, so existing IP address to name
+-    // mappings to not expire as long as the connection is active.
++    // Keep recently used mappings at the back of the LRU order. Mappings remain
++    // stable for this process lifetime because client DNS caches can outlive a
++    // short virtual-DNS TTL and continue connecting to the allocated address.
+@@ -84,3 +80 @@ impl VirtualDns {
+-        _ = self.lru_cache.get_mut(addr).map(|entry| {
+-            entry.expiry = Instant::now() + Duration::from_secs(MAPPING_TIMEOUT);
+-        });
++        _ = self.lru_cache.get(addr);
+@@ -102,20 +95,0 @@ impl VirtualDns {
+-        let now = Instant::now();
+-
+-        // Iterate through all entries of the LRU cache and remove those that have expired.
+-        loop {
+-            let (ip, entry) = match self.lru_cache.iter().next() {
+-                None => break,
+-                Some((ip, entry)) => (ip, entry),
+-            };
+-
+-            // The entry has expired.
+-            if now > entry.expiry {
+-                let name = entry.name.clone();
+-                self.lru_cache.remove(&ip.clone());
+-                self.name_to_ip.remove(&name);
+-                continue; // There might be another expired entry after this one.
+-            }
+-
+-            break; // The entry has not expired and all following entries are newer.
+-        }
+-
+@@ -134 +107,0 @@ impl VirtualDns {
+-                let expiry = Instant::now() + Duration::from_secs(MAPPING_TIMEOUT);
+@@ -136 +109 @@ impl VirtualDns {
+-                vacant.insert(self.next_addr, NameCacheEntry { name: insert_name, expiry });
++                vacant.insert(self.next_addr, NameCacheEntry { name: insert_name });

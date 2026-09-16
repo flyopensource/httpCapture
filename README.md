@@ -86,7 +86,7 @@ Debug 仍生成包含 `armeabi-v7a`、`arm64-v8a` 和 `x86_64` 的 Universal APK
 ./native/build-tun2proxy.sh
 ```
 
-脚本固定使用 tun2proxy `v0.8.3` / `e271de19683937f23d3f8f0eb4df0a61fc4a6e50`，并应用 Android 停止 VPN 时不得结束整个 App 进程的补丁。
+脚本固定使用 tun2proxy `v0.8.3` / `e271de19683937f23d3f8f0eb4df0a61fc4a6e50`，并应用 Android 停止 VPN 时不得结束整个 App 进程、虚拟 DNS 映射在 VPN 生命周期内保持稳定的补丁。
 
 ## 开源与签名安全
 
