@@ -145,11 +145,11 @@ type sourceFingerprint struct {
 }
 
 func defaultSessionsRoot() (string, error) {
-	home, err := os.UserHomeDir()
+	workingDirectory, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "httpcapture-sessions"), nil
+	return filepath.Join(workingDirectory, "httpcapture-sessions"), nil
 }
 
 func openWebIndex(root string) (*webIndex, error) {

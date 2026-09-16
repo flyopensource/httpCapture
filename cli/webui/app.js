@@ -7,7 +7,7 @@ const state = {
   appliedSessionFilter: {}, appliedRequestFilter: {},
   appliedSessionParams: new URLSearchParams(), appliedRequestParams: new URLSearchParams(),
   livePaused: false, liveConnected: false, liveRefreshPending: false, liveRefreshBusy: false,
-  newMatchingRequests: 0
+  newMatchingRequests: 0, currentDetail: null
 };
 const byId = id => document.getElementById(id);
 
@@ -237,6 +237,7 @@ async function openDetail(requestId) {
   try {
     const path = "/api/sessions/" + encodeURIComponent(state.selected.id) + "/requests/" + requestId;
     const detail = await api(path);
+    state.currentDetail = detail;
     document.querySelector(".workspace").classList.add("detail-open");
     byId("detail-panel").hidden = false;
     byId("detail-method").textContent = detail.method;
@@ -277,7 +278,85 @@ function renderBody(container, payload) {
   }
 }
 
+async function copyCurrentRequestAsCurl() {
+  if (!state.currentDetail) return;
+  const result = curlFromRequestDetail(state.currentDetail);
+  try {
+    await copyText(result.command);
+    const suffix = result.warnings.length ? "；" + result.warnings.join("；") : "";
+    setStatus("已复制 cURL" + suffix);
+  } catch (error) {
+    setStatus("复制失败: " + error.message, true);
+  }
+}
+
+function curlFromRequestDetail(detail) {
+  const warnings = [];
+  const method = String(detail.method || "GET").toUpperCase();
+  const parts = ["curl", shellQuote(detail.url || "")];
+  if (method !== "GET" || requestBodyCanBeCopied(detail.requestBody)) {
+    parts.push("-X", shellQuote(method));
+  }
+  const headers = detail.requestHeaders || {};
+  for (const name of Object.keys(headers).sort((left, right) => left.localeCompare(right))) {
+    if (!name || name.toLowerCase() === "content-length") continue;
+    const values = Array.isArray(headers[name]) ? headers[name] : [headers[name]];
+    for (const value of values) {
+      if (value === undefined || value === null) continue;
+      parts.push("-H", shellQuote(name + ": " + String(value)));
+    }
+  }
+  if (requestBodyCanBeCopied(detail.requestBody)) {
+    parts.push("--data-raw", shellQuote(detail.requestBody.data || ""));
+  } else if (requestBodyWasCaptured(detail.requestBody)) {
+    warnings.push("请求体不是完整文本，未写入 cURL");
+  }
+  return { command: wrapCurlParts(parts), warnings };
+}
+
+function requestBodyCanBeCopied(payload) {
+  return payload && payload.encoding === "utf8" && !payload.truncated && !payload.displayTruncated &&
+    !payload.readError && Number(payload.capturedSize || 0) > 0 && typeof payload.data === "string";
+}
+
+function requestBodyWasCaptured(payload) {
+  return payload && Number(payload.capturedSize || 0) > 0;
+}
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
+function wrapCurlParts(parts) {
+  if (parts.length <= 2) return parts.join(" ");
+  const lines = [parts[0] + " " + parts[1]];
+  for (let index = 2; index < parts.length; index += 2) {
+    lines.push("  " + parts[index] + (parts[index + 1] ? " " + parts[index + 1] : ""));
+  }
+  return lines.join(" \\\n");
+}
+
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.append(area);
+  area.select();
+  try {
+    if (!document.execCommand("copy")) throw new Error("浏览器拒绝复制");
+  } finally {
+    area.remove();
+  }
+}
+
 function closeDetail() {
+  state.currentDetail = null;
   byId("detail-panel").hidden = true;
   document.querySelector(".workspace").classList.remove("detail-open");
 }
@@ -300,6 +379,7 @@ byId("request-filters").addEventListener("submit", event => { event.preventDefau
 byId("previous-page").addEventListener("click", () => { if (state.page > 1) { state.page--; loadRequests(); } });
 byId("next-page").addEventListener("click", () => { if (state.page * state.pageSize < state.total) { state.page++; loadRequests(); } });
 byId("close-detail").addEventListener("click", closeDetail);
+byId("copy-curl").addEventListener("click", copyCurrentRequestAsCurl);
 byId("rescan").addEventListener("click", async () => {
   try { setStatus("正在重新扫描…"); await api("/api/rescan", { method: "POST" }); await loadSessions(true); if (state.selected) await loadRequests(); }
   catch (error) { setStatus(error.message, true); }

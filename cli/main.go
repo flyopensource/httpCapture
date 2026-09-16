@@ -701,11 +701,11 @@ func configDirectory() (string, error) {
 }
 
 func sessionDirectory(name string) (string, error) {
-	root, err := os.UserHomeDir()
+	root, err := defaultSessionsRoot()
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(root, "httpcapture-sessions", name)
+	path := filepath.Join(root, name)
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return "", err
 	}

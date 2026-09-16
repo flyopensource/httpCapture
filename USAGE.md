@@ -65,7 +65,7 @@ httpcapture serve --terminal-qr never --out pair.png
 停止后，CLI 会归档会话到：
 
 ```text
-~/httpcapture-sessions/<captureId>/
+./httpcapture-sessions/<captureId>/
   meta.json
   traffic.jsonl
   session.har
@@ -104,7 +104,13 @@ http://127.0.0.1:9080/
 
 ```bash
 httpcapture web --port 9081
-httpcapture web --sessions ~/httpcapture-sessions --no-open
+httpcapture web --sessions /path/to/httpcapture-sessions --no-open
+```
+
+如果要查看旧版本保存在用户目录下的会话，可以显式指定：
+
+```bash
+httpcapture web --sessions ~/httpcapture-sessions
 ```
 
 Web 能力：
@@ -114,6 +120,7 @@ Web 能力：
 - 搜索 URL、Host、Path、Method、Status、Header、文本 Body。
 - 按 Method、状态码或状态组、Content-Type、耗时、大小过滤。
 - 查看 Query、Headers、请求体、响应体。
+- 在请求详情中复制为 cURL；完整文本请求体会写入命令，二进制或截断 Body 会提示未包含。
 - 下载 HAR、Body，打开会话目录。
 - 将会话移动到 `.trash`，不是永久删除。
 - 实时显示活动 `traffic.jsonl` 中已完整写入的请求。

@@ -69,7 +69,13 @@
       </section>
     </main>
     <aside id="detail-panel" class="detail-panel" hidden>
-      <div class="detail-heading"><div><span id="detail-method" class="method"></span><strong id="detail-status"></strong></div><button id="close-detail" aria-label="关闭详情">×</button></div>
+      <div class="detail-heading">
+        <div><span id="detail-method" class="method"></span><strong id="detail-status"></strong></div>
+        <div class="detail-actions">
+          <button id="copy-curl" type="button">复制为 cURL</button>
+          <button id="close-detail" aria-label="关闭详情">×</button>
+        </div>
+      </div>
       <p id="detail-url" class="detail-url"></p>
       <div id="detail-timing" class="facts"></div>
       <details open><summary>Query</summary><pre id="detail-query"></pre></details>

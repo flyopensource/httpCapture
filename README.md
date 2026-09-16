@@ -40,7 +40,7 @@ HTTP Capture 是面向日常 Android 开发的抓包代理接入工具。它不�
    ./cli/bin/httpcapture-linux-amd64 web
    ```
 
-   会话目录为 `~/httpcapture-sessions/<captureId>/`，包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
+   会话目录为运行命令当前目录下的 `./httpcapture-sessions/<captureId>/`，包含 `meta.json`、`traffic.jsonl` 和 `session.har`。
 
 继续使用 Charles 时无需由 CLI 启动代理，导出 Charles CA 后执行 `httpcapture pair --engine charles`。mitmproxy 作为备用引擎继续保留。
 

@@ -47,7 +47,7 @@ APK 侧流程：
 2. 按提示安装 CA。
 3. 选择一个或多个目标 App，支持应用名和包名模糊搜索。
 4. 点击“开始抓包”或使用系统快捷磁贴。
-5. 停止后在 `~/httpcapture-sessions/<captureId>/` 查看 `meta.json`、`traffic.jsonl` 和 `session.har`。
+5. 停止后在运行命令当前目录下的 `./httpcapture-sessions/<captureId>/` 查看 `meta.json`、`traffic.jsonl` 和 `session.har`。
 
 完整用户流程见仓库根目录 [USAGE.md](../USAGE.md)。
 
@@ -199,7 +199,7 @@ httpcapture record status
 httpcapture record stop
 ```
 
-会话默认保存在 `~/httpcapture-sessions/<captureId>/`：
+会话默认保存在运行命令当前目录下的 `./httpcapture-sessions/<captureId>/`：
 
 - `meta.json`：引擎、包名集合、设备、IP 和毫秒时间。
 - `traffic.jsonl`：httpCapture 自己生成的流式原始数据。
@@ -219,12 +219,14 @@ httpcapture record stop
 httpcapture web
 ```
 
-默认打开 `http://127.0.0.1:9080/`，读取 `~/httpcapture-sessions`。页面和 API 都嵌入同一个 CLI 文件，不依赖 Proxify 正在运行、外部 CDN 或云服务。端口被占用时可以改用：
+默认打开 `http://127.0.0.1:9080/`，读取运行命令当前目录下的 `./httpcapture-sessions`。页面和 API 都嵌入同一个 CLI 文件，不依赖 Proxify 正在运行、外部 CDN 或云服务。端口被占用时可以改用：
 
 ```bash
 httpcapture web --port 9081
 httpcapture web --sessions /path/to/httpcapture-sessions --no-open
 ```
+
+如果要查看旧版本保存在用户目录下的会话，可以显式指定 `--sessions ~/httpcapture-sessions`。
 
 当前能力：
 
@@ -232,6 +234,7 @@ httpcapture web --sessions /path/to/httpcapture-sessions --no-open
 - 请求可全文搜索 URL、Host、Path、Method、状态、Header 和文本 Body。
 - 支持 Method、状态码或状态组（如 `2xx`）、Content-Type、耗时、大小以及时间正倒序组合过滤。
 - 详情展示 Query、请求/响应 Headers、文本 Body 和基础时序。
+- 请求详情支持复制为 cURL；完整文本请求体会写入命令，二进制或截断 Body 会提示未包含。
 - 二进制 Body 不直接展开，超大文本只显示有限预览；均可下载已保存的内容。
 - 可下载会话 HAR、调用系统文件管理器打开会话目录。
 - “移到回收目录”只把会话移动到会话根目录下的 `.trash`，不会永久删除。

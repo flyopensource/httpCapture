@@ -723,6 +723,18 @@ func TestCharlesAuthenticationUsesEnvironmentWithoutLoggingSecret(t *testing.T) 
 
 func TestRecordStartStopAndSafeClearWorkflow(t *testing.T) {
 	root := t.TempDir()
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(workingDirectory); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	}()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	var requests []string
@@ -779,7 +791,7 @@ func TestRecordStartStopAndSafeClearWorkflow(t *testing.T) {
 	if originalCompleted.Status != "completed" || originalCompleted.SessionDir != output {
 		t.Fatalf("stale original Charles metadata: %+v", originalCompleted)
 	}
-	backups, err := filepath.Glob(filepath.Join(root, "home", "httpcapture-sessions", "*-pre-clear", "backup.chls"))
+	backups, err := filepath.Glob(filepath.Join(root, "httpcapture-sessions", "*-pre-clear", "backup.chls"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("expected one pre-clear backup, got %v, err=%v", backups, err)
 	}
