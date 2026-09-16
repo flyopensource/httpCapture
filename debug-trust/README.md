@@ -11,7 +11,7 @@ dependencyResolutionManagement {
         mavenCentral()
         maven {
             url = uri("https://jitpack.io")
-            content { includeGroup("com.github.flyopensource.httpCapture") }
+            content { includeGroup("com.github.flyopensource") }
         }
     }
 }
@@ -21,8 +21,8 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    debugImplementation("com.github.flyopensource.httpCapture:debug-trust:v0.4.0")
-    "alphaImplementation"("com.github.flyopensource.httpCapture:debug-trust:v0.4.0")
+    debugImplementation("com.github.flyopensource:httpCapture:v0.4.0")
+    "alphaImplementation"("com.github.flyopensource:httpCapture:v0.4.0")
 }
 ```
 
