@@ -234,8 +234,8 @@ httpcapture web --sessions /path/to/httpcapture-sessions --no-open
 - 请求可全文搜索 URL、Host、Path、Method、状态、Header 和文本 Body。
 - 支持 Method、状态码或状态组（如 `2xx`）、Content-Type、耗时、大小以及时间正倒序组合过滤。
 - 详情展示 Query、请求/响应 Headers、文本 Body 和基础时序。
-- 请求详情支持复制为 cURL；完整文本请求体会写入命令，二进制或截断 Body 会提示未包含。
-- 二进制 Body 不直接展开，超大文本只显示有限预览；均可下载已保存的内容。
+- 请求详情支持复制为 cURL，或复制 cURL + 响应；完整文本请求/响应体会写入复制内容，二进制或截断 Body 会提示未包含。
+- 二进制 Body 不直接展开，超大文本只显示有限预览。
 - 可下载会话 HAR、调用系统文件管理器打开会话目录。
 - “移到回收目录”只把会话移动到会话根目录下的 `.trash`，不会永久删除。
 - 支持结构化 ZIP 批量导出：所有 Proxify 会话、当前会话、当前已生效查询条件的全部命中项，以及跨分页手选的多个请求或会话。导出不受页面分页数量限制。

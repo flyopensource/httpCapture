@@ -120,8 +120,8 @@ Web 能力：
 - 搜索 URL、Host、Path、Method、Status、Header、文本 Body。
 - 按 Method、状态码或状态组、Content-Type、耗时、大小过滤。
 - 查看 Query、Headers、请求体、响应体。
-- 在请求详情中复制为 cURL；完整文本请求体会写入命令，二进制或截断 Body 会提示未包含。
-- 下载 HAR、Body，打开会话目录。
+- 在请求详情中复制为 cURL，或复制 cURL + 响应；完整文本请求/响应体会写入复制内容，二进制或截断 Body 会提示未包含。
+- 下载 HAR，打开会话目录。
 - 将会话移动到 `.trash`，不是永久删除。
 - 实时显示活动 `traffic.jsonl` 中已完整写入的请求。
 - 支持暂停/继续页面更新。

@@ -271,11 +271,6 @@ function renderBody(container, payload) {
   } else if (payload.encoding === "base64") {
     const binary = document.createElement("p"); binary.textContent = "二进制 Body 不在页面内展开。"; container.append(binary);
   }
-  if (payload.downloadUrl) {
-    const link = document.createElement("a");
-    link.className = "button"; link.href = payload.downloadUrl + "?download=1"; link.textContent = "下载已保存 Body";
-    container.append(link);
-  }
 }
 
 async function copyCurrentRequestAsCurl() {
@@ -285,6 +280,18 @@ async function copyCurrentRequestAsCurl() {
     await copyText(result.command);
     const suffix = result.warnings.length ? "；" + result.warnings.join("；") : "";
     setStatus("已复制 cURL" + suffix);
+  } catch (error) {
+    setStatus("复制失败: " + error.message, true);
+  }
+}
+
+async function copyCurrentRequestAsCurlAndResponse() {
+  if (!state.currentDetail) return;
+  const result = curlAndResponseFromRequestDetail(state.currentDetail);
+  try {
+    await copyText(result.command);
+    const suffix = result.warnings.length ? "；" + result.warnings.join("；") : "";
+    setStatus("已复制 cURL + 响应" + suffix);
   } catch (error) {
     setStatus("复制失败: " + error.message, true);
   }
@@ -312,6 +319,55 @@ function curlFromRequestDetail(detail) {
     warnings.push("请求体不是完整文本，未写入 cURL");
   }
   return { command: wrapCurlParts(parts), warnings };
+}
+
+function curlAndResponseFromRequestDetail(detail) {
+  const curl = curlFromRequestDetail(detail);
+  const warnings = [...curl.warnings];
+  const lines = [
+    "# Request",
+    curl.command,
+    "",
+    "# Response",
+    responseStatusLine(detail),
+    ...headersAsLines(detail.responseHeaders || {})
+  ];
+  const responseBody = payloadTextForCopy(detail.responseBody, "响应体", warnings);
+  if (responseBody) {
+    lines.push("", responseBody);
+  }
+  return { command: lines.join("\n"), warnings };
+}
+
+function responseStatusLine(detail) {
+  const version = detail.responseHttpVersion || "HTTP";
+  const statusCode = detail.statusCode ? String(detail.statusCode) : "";
+  const status = String(detail.status || "").trim();
+  if (statusCode && status.startsWith(statusCode)) return [version, status].join(" ");
+  return [version, statusCode, status].filter(Boolean).join(" ");
+}
+
+function headersAsLines(headers) {
+  const lines = [];
+  for (const name of Object.keys(headers).sort((left, right) => left.localeCompare(right))) {
+    if (!name) continue;
+    const values = Array.isArray(headers[name]) ? headers[name] : [headers[name]];
+    for (const value of values) {
+      if (value === undefined || value === null) continue;
+      lines.push(name + ": " + String(value));
+    }
+  }
+  return lines;
+}
+
+function payloadTextForCopy(payload, label, warnings) {
+  if (!payload || Number(payload.capturedSize || 0) <= 0) return "";
+  if (payload.encoding === "utf8" && !payload.truncated && !payload.displayTruncated &&
+      !payload.readError && typeof payload.data === "string") {
+    return payload.data;
+  }
+  warnings.push(label + "不是完整文本，未写入复制内容");
+  return "[" + label + "不是完整文本，未写入复制内容]";
 }
 
 function requestBodyCanBeCopied(payload) {
@@ -380,6 +436,7 @@ byId("previous-page").addEventListener("click", () => { if (state.page > 1) { st
 byId("next-page").addEventListener("click", () => { if (state.page * state.pageSize < state.total) { state.page++; loadRequests(); } });
 byId("close-detail").addEventListener("click", closeDetail);
 byId("copy-curl").addEventListener("click", copyCurrentRequestAsCurl);
+byId("copy-curl-response").addEventListener("click", copyCurrentRequestAsCurlAndResponse);
 byId("rescan").addEventListener("click", async () => {
   try { setStatus("正在重新扫描…"); await api("/api/rescan", { method: "POST" }); await loadSessions(true); if (state.selected) await loadRequests(); }
   catch (error) { setStatus(error.message, true); }
