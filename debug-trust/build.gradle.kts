@@ -1,6 +1,5 @@
 plugins {
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
     id("maven-publish")
 }
 
@@ -12,15 +11,15 @@ group = if (!jitPackGroup.isNullOrBlank() && !jitPackArtifact.isNullOrBlank()) {
 } else {
     "com.github.flyopensource.httpCapture"
 }
-version = providers.environmentVariable("VERSION").orElse("0.4.0-local").get()
+version = providers.environmentVariable("VERSION").orElse("0.4.1-local").get()
 
 android {
     namespace = "com.fly.httpcapture.debugtrust"
     compileSdk = 35
     defaultConfig { minSdk = 21 }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     publishing {
         singleVariant("release") {

@@ -21,8 +21,8 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    debugImplementation("com.github.flyopensource:httpCapture:v0.4.0")
-    "alphaImplementation"("com.github.flyopensource:httpCapture:v0.4.0")
+    debugImplementation("com.github.flyopensource:httpCapture:v0.4.1")
+    "alphaImplementation"("com.github.flyopensource:httpCapture:v0.4.1")
 }
 ```
 
