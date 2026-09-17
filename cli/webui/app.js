@@ -365,8 +365,10 @@ function renderBody(container, payload, side, headers = {}) {
   const capturedSize = Number(payload?.capturedSize || 0);
   flags.push(formatBytes(capturedSize) + " 已保存");
   if (payload?.declaredSize > payload?.capturedSize) flags.push("声明 " + formatBytes(payload.declaredSize));
+  if (payload?.decodedEncoding) flags.push("已按 " + payload.decodedEncoding + " 解码预览");
   if (payload?.truncated) flags.push("采集时已截断");
   if (payload?.displayTruncated) flags.push("页面预览已截断");
+  if (payload?.displayError) flags.push(payload.displayError);
   if (payload?.readError) flags.push(payload.readError);
   note.textContent = flags.join(" · ");
   container.append(note);

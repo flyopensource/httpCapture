@@ -121,7 +121,7 @@ Web 能力：
 - 按 Method、状态码或状态组、Content-Type、耗时、大小过滤。
 - 支持 Focus 规则：可保存多条 Host、Path、URL 或 Method + URL 关注规则，并在请求列表中高亮、只看 Focus 或隐藏 Focus。
 - 耗时和大小过滤放在“高级筛选”中，日常搜索框保持常驻。
-- 查看 Query、Headers、请求体、响应体；请求体支持 Text / Form / Raw 视图，响应体支持 Text / JSON / Raw 视图，二进制 Body 不在页面内展开，仅提供原始 Body 下载。
+- 查看 Query、Headers、请求体、响应体；请求体支持 Text / Form / Raw 视图，响应体支持 Text / JSON / Raw 视图；gzip/deflate 文本 Body 会先解码再展示，二进制 Body 不在页面内展开，仅提供原始 Body 下载。
 - 在请求详情中复制为 cURL，或复制 cURL + 响应；完整文本请求/响应体会写入复制内容，二进制或截断 Body 会提示未包含。
 - 下载 HAR，打开会话目录。
 - 将会话移动到 `.trash`，不是永久删除。

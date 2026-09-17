@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -94,6 +95,37 @@ func TestWebIndexSearchFiltersAndDetail(t *testing.T) {
 	again, err := index.listRequests(context.Background(), requestQuery{SessionID: sessionID})
 	if err != nil || again.Total != 2 {
 		t.Fatalf("rescan duplicated rows: page=%#v err=%v", again, err)
+	}
+}
+
+func TestWebDetailDecodesGzipJSONForDisplay(t *testing.T) {
+	root := t.TempDir()
+	sessionID := "gzip-json"
+	transaction := webTestTransaction(3000, "GET", "http://nweitian.paipaipeiwan.top/api/heartbeat/log", 200, 9, "application/vnd.ytapi.v1+json", capturedPayload{})
+	transaction.Response.Headers["Content-Encoding"] = []string{"gzip"}
+	transaction.Response.Body = gzipPayload(t, `{"code":200,"message":"ok"}`)
+	writeWebTestSession(t, root, sessionID, []capturedTransaction{transaction}, false)
+	index, err := openWebIndex(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.close()
+	if err := index.rescan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := index.listRequests(context.Background(), requestQuery{SessionID: sessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := index.requestDetail(context.Background(), sessionID, page.Items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.ResponseBody.Encoding != "utf8" ||
+		detail.ResponseBody.DecodedEncoding != "gzip" ||
+		!strings.Contains(detail.ResponseBody.Data, `"message":"ok"`) ||
+		detail.ResponseBody.DownloadURL == "" {
+		t.Fatalf("gzip json was not decoded for display: %#v", detail.ResponseBody)
 	}
 }
 
@@ -286,6 +318,22 @@ func webTestTransaction(timestamp int64, method, target string, status int, dura
 			Headers: map[string][]string{"Content-Type": {contentType}},
 			Body:    capturedPayload{DeclaredSize: 2, CapturedSize: 2, Encoding: "utf8", Data: "ok"},
 		},
+	}
+}
+
+func gzipPayload(t *testing.T, text string) capturedPayload {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	if _, err := writer.Write([]byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return capturedPayload{
+		DeclaredSize: int64(buffer.Len()), CapturedSize: buffer.Len(),
+		Encoding: "base64", Data: base64.StdEncoding.EncodeToString(buffer.Bytes()),
 	}
 }
 

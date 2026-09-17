@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -116,6 +118,8 @@ type payloadView struct {
 	Data             string `json:"data,omitempty"`
 	Truncated        bool   `json:"truncated,omitempty"`
 	DisplayTruncated bool   `json:"displayTruncated,omitempty"`
+	DecodedEncoding  string `json:"decodedEncoding,omitempty"`
+	DisplayError     string `json:"displayError,omitempty"`
 	ReadError        string `json:"readError,omitempty"`
 	DownloadURL      string `json:"downloadUrl,omitempty"`
 }
@@ -807,14 +811,14 @@ func (index *webIndex) requestDetail(ctx context.Context, sessionID string, requ
 		ClientAddress: captured.ClientAddress, Method: captured.Request.Method,
 		URL: captured.Request.URL, HTTPVersion: captured.Request.HTTPVersion,
 		RequestHeaders: captured.Request.Headers, Query: query,
-		RequestBody: payloadForDisplay(captured.Request.Body, sessionID, requestID, "request"),
+		RequestBody: payloadForDisplay(captured.Request.Body, captured.Request.Headers, sessionID, requestID, "request"),
 		StatusCode:  captured.Response.StatusCode, Status: captured.Response.Status,
 		ResponseVersion: captured.Response.HTTPVersion, ResponseHeaders: captured.Response.Headers,
-		ResponseBody: payloadForDisplay(captured.Response.Body, sessionID, requestID, "response"),
+		ResponseBody: payloadForDisplay(captured.Response.Body, captured.Response.Headers, sessionID, requestID, "response"),
 	}, nil
 }
 
-func payloadForDisplay(payload capturedPayload, sessionID string, requestID int64, side string) payloadView {
+func payloadForDisplay(payload capturedPayload, headers map[string][]string, sessionID string, requestID int64, side string) payloadView {
 	view := payloadView{
 		DeclaredSize: payload.DeclaredSize, CapturedSize: payload.CapturedSize,
 		Encoding: payload.Encoding, Truncated: payload.Truncated, ReadError: payload.ReadError,
@@ -822,11 +826,114 @@ func payloadForDisplay(payload capturedPayload, sessionID string, requestID int6
 	if payload.CapturedSize > 0 {
 		view.DownloadURL = fmt.Sprintf("/api/sessions/%s/requests/%d/body/%s", url.PathEscape(sessionID), requestID, side)
 	}
-	if payload.Encoding == "utf8" {
-		view.Data = truncateUTF8(payload.Data, maxDisplayBodyBytes)
-		view.DisplayTruncated = len(view.Data) < len(payload.Data)
+	text, decodedEncoding, truncated, err := payloadTextForDisplay(payload, firstHeader(headers, "Content-Encoding"))
+	if err != nil {
+		view.DisplayError = err.Error()
+		return view
+	}
+	if text != "" || payload.CapturedSize > 0 && decodedEncoding != "" {
+		view.Encoding = "utf8"
+		view.Data = text
+		view.DecodedEncoding = decodedEncoding
+		view.DisplayTruncated = truncated
 	}
 	return view
+}
+
+func payloadTextForDisplay(payload capturedPayload, contentEncoding string) (string, string, bool, error) {
+	if payload.CapturedSize <= 0 {
+		return "", "", false, nil
+	}
+	content, err := payloadBytes(payload)
+	if err != nil {
+		return "", "", false, err
+	}
+	decodedEncoding := ""
+	decodedTruncated := false
+	encodings := contentEncodings(contentEncoding)
+	for index := len(encodings) - 1; index >= 0; index-- {
+		encoding := encodings[index]
+		if encoding == "identity" {
+			continue
+		}
+		decoded, truncated, err := decodeContentEncoding(content, encoding)
+		if err != nil {
+			return "", decodedEncoding, false, err
+		}
+		content = decoded
+		decodedTruncated = decodedTruncated || truncated
+		if decodedEncoding == "" {
+			decodedEncoding = encoding
+		} else {
+			decodedEncoding += "," + encoding
+		}
+	}
+	if !displayBytesAreText(content) {
+		return "", decodedEncoding, false, nil
+	}
+	text := string(content)
+	truncated := len(text) > maxDisplayBodyBytes
+	display := truncateUTF8(text, maxDisplayBodyBytes)
+	return display, decodedEncoding, decodedTruncated || truncated || len(display) < len(text), nil
+}
+
+func contentEncodings(value string) []string {
+	parts := strings.Split(value, ",")
+	encodings := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if encoding := strings.ToLower(strings.TrimSpace(part)); encoding != "" {
+			encodings = append(encodings, encoding)
+		}
+	}
+	return encodings
+}
+
+func decodeContentEncoding(content []byte, encoding string) ([]byte, bool, error) {
+	var reader io.ReadCloser
+	var err error
+	switch encoding {
+	case "gzip", "x-gzip":
+		reader, err = gzip.NewReader(bytes.NewReader(content))
+	case "deflate":
+		reader, err = zlib.NewReader(bytes.NewReader(content))
+	default:
+		return nil, false, fmt.Errorf("暂不支持 %s Body 解码", encoding)
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("%s Body 解码失败: %w", encoding, err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(io.LimitReader(reader, int64(maxDisplayBodyBytes)+1))
+	if err != nil {
+		return nil, false, fmt.Errorf("%s Body 解码失败: %w", encoding, err)
+	}
+	truncated := len(decoded) > maxDisplayBodyBytes
+	if len(decoded) > maxDisplayBodyBytes {
+		decoded = decoded[:maxDisplayBodyBytes]
+		for !utf8.Valid(decoded) && len(decoded) > 0 {
+			decoded = decoded[:len(decoded)-1]
+		}
+	}
+	return decoded, truncated, nil
+}
+
+func displayBytesAreText(content []byte) bool {
+	if !utf8.Valid(content) {
+		return false
+	}
+	if len(content) == 0 {
+		return true
+	}
+	controls := 0
+	for _, value := range content {
+		if value == 0 {
+			return false
+		}
+		if value < 32 && value != '\t' && value != '\n' && value != '\r' {
+			controls++
+		}
+	}
+	return controls <= 8 || float64(controls)/float64(len(content)) <= 0.01
 }
 
 func payloadBytes(payload capturedPayload) ([]byte, error) {
