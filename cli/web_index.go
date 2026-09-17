@@ -73,6 +73,8 @@ type requestQuery struct {
 	Method        string
 	Status        string
 	ContentType   string
+	FocusMode     string
+	FocusRules    []focusRule
 	FromMS        int64
 	ToMS          int64
 	MinDurationMS int64
@@ -97,6 +99,7 @@ type requestSummary struct {
 	RequestSize  int64  `json:"requestSize"`
 	ResponseSize int64  `json:"responseSize"`
 	TotalSize    int64  `json:"totalSize"`
+	Focused      bool   `json:"focused,omitempty"`
 }
 
 type requestPage struct {
@@ -578,6 +581,13 @@ func (index *webIndex) listRequests(ctx context.Context, filter requestQuery) (r
 	if filter.PageSize > 500 {
 		filter.PageSize = 500
 	}
+	focusMode := strings.ToLower(strings.TrimSpace(filter.FocusMode))
+	if focusMode == "" {
+		focusMode = "all"
+	}
+	if focusMode != "all" && focusMode != "only" && focusMode != "exclude" {
+		return requestPage{}, errors.New("Focus 模式必须是 all、only 或 exclude")
+	}
 	where := []string{"r.session_id = ?"}
 	arguments := []any{filter.SessionID}
 	join := ""
@@ -627,6 +637,18 @@ func (index *webIndex) listRequests(ctx context.Context, filter requestQuery) (r
 	addIntRange("r.timestamp_ms", filter.FromMS, filter.ToMS)
 	addIntRange("r.duration_ms", filter.MinDurationMS, filter.MaxDurationMS)
 	addIntRange("(r.request_size + r.response_size)", filter.MinSize, filter.MaxSize)
+	focusWhere, focusArguments := focusRulesSQL(filter.FocusRules)
+	if focusMode == "only" {
+		if focusWhere == "" {
+			where = append(where, "0")
+		} else {
+			where = append(where, "("+focusWhere+")")
+			arguments = append(arguments, focusArguments...)
+		}
+	} else if focusMode == "exclude" && focusWhere != "" {
+		where = append(where, "NOT ("+focusWhere+")")
+		arguments = append(arguments, focusArguments...)
+	}
 	whereSQL := strings.Join(where, " AND ")
 	var total int
 	if err := index.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM requests r"+join+" WHERE "+whereSQL, arguments...).Scan(&total); err != nil {
@@ -636,10 +658,16 @@ func (index *webIndex) listRequests(ctx context.Context, filter requestQuery) (r
 	if filter.SortAscending {
 		sortOrder = "ASC"
 	}
+	focusSelect := "0"
+	focusSelectArguments := []any{}
+	if focusWhere != "" {
+		focusSelect = "CASE WHEN " + focusWhere + " THEN 1 ELSE 0 END"
+		focusSelectArguments = append(focusSelectArguments, focusArguments...)
+	}
 	query := `SELECT r.id, r.timestamp_ms, r.method, r.url, r.host, r.path, r.status,
-		r.content_type, r.duration_ms, r.request_size, r.response_size
+		r.content_type, r.duration_ms, r.request_size, r.response_size, ` + focusSelect + `
 		FROM requests r` + join + ` WHERE ` + whereSQL + ` ORDER BY r.timestamp_ms ` + sortOrder + `, r.id ` + sortOrder + ` LIMIT ? OFFSET ?`
-	queryArguments := append(append([]any{}, arguments...), filter.PageSize, (filter.Page-1)*filter.PageSize)
+	queryArguments := append(append(append([]any{}, focusSelectArguments...), arguments...), filter.PageSize, (filter.Page-1)*filter.PageSize)
 	rows, err := index.db.QueryContext(ctx, query, queryArguments...)
 	if err != nil {
 		return requestPage{}, err
@@ -648,15 +676,53 @@ func (index *webIndex) listRequests(ctx context.Context, filter requestQuery) (r
 	items := make([]requestSummary, 0)
 	for rows.Next() {
 		var item requestSummary
+		var focused int
 		if err := rows.Scan(&item.ID, &item.TimestampMS, &item.Method, &item.URL, &item.Host,
 			&item.Path, &item.Status, &item.ContentType, &item.DurationMS,
-			&item.RequestSize, &item.ResponseSize); err != nil {
+			&item.RequestSize, &item.ResponseSize, &focused); err != nil {
 			return requestPage{}, err
 		}
 		item.TotalSize = item.RequestSize + item.ResponseSize
+		item.Focused = focused != 0
 		items = append(items, item)
 	}
 	return requestPage{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, rows.Err()
+}
+
+func focusRulesSQL(rules []focusRule) (string, []any) {
+	clauses := []string{}
+	arguments := []any{}
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		pattern := strings.TrimSpace(rule.Pattern)
+		if pattern == "" {
+			continue
+		}
+		like := "%" + escapeLike(pattern) + "%"
+		switch rule.Type {
+		case "host_contains":
+			clauses = append(clauses, "r.host LIKE ? ESCAPE '\\'")
+			arguments = append(arguments, like)
+		case "path_contains":
+			clauses = append(clauses, "r.path LIKE ? ESCAPE '\\'")
+			arguments = append(arguments, like)
+		case "method_url_contains":
+			method := strings.ToUpper(strings.TrimSpace(rule.Method))
+			if method == "" {
+				clauses = append(clauses, "r.url LIKE ? ESCAPE '\\'")
+				arguments = append(arguments, like)
+			} else {
+				clauses = append(clauses, "(r.method = ? AND r.url LIKE ? ESCAPE '\\')")
+				arguments = append(arguments, method, like)
+			}
+		default:
+			clauses = append(clauses, "r.url LIKE ? ESCAPE '\\'")
+			arguments = append(arguments, like)
+		}
+	}
+	return strings.Join(clauses, " OR "), arguments
 }
 
 func (index *webIndex) requestTransaction(ctx context.Context, sessionID string, requestID int64) (capturedTransaction, error) {

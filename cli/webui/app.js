@@ -7,7 +7,8 @@ const state = {
   appliedSessionFilter: {}, appliedRequestFilter: {},
   appliedSessionParams: new URLSearchParams(), appliedRequestParams: new URLSearchParams(),
   livePaused: false, liveConnected: false, liveRefreshPending: false, liveRefreshBusy: false,
-  newMatchingRequests: 0, currentDetail: null
+  newMatchingRequests: 0, currentDetail: null,
+  focusRules: []
 };
 const byId = id => document.getElementById(id);
 
@@ -36,6 +37,47 @@ function datetimeMillis(value) { return value ? String(new Date(value).getTime()
 function setStatus(message, error = false) {
   byId("status").textContent = message;
   byId("status").classList.toggle("error", error);
+}
+
+async function loadFocusRules() {
+  try {
+    const result = await api("/api/focus");
+    state.focusRules = Array.isArray(result.rules) ? result.rules : [];
+    renderFocusRules();
+  } catch (error) {
+    setStatus("读取 Focus 规则失败: " + error.message, true);
+  }
+}
+
+async function saveFocusRules(message = "Focus 规则已保存") {
+  const result = await api("/api/focus", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rules: state.focusRules })
+  });
+  state.focusRules = Array.isArray(result.rules) ? result.rules : [];
+  renderFocusRules();
+  setStatus(message);
+  if (state.selected) {
+    state.page = 1;
+    await loadRequests();
+  }
+}
+
+function enabledFocusRules() {
+  return state.focusRules.filter(rule => rule.enabled && String(rule.pattern || "").trim());
+}
+
+function appendFocusParams(params) {
+  const mode = params.get("focus") || "all";
+  const enabled = enabledFocusRules();
+  if (mode === "all" && !enabled.length) {
+    params.delete("focus");
+    return;
+  }
+  params.set("focus", mode);
+  if (enabled.length) params.set("focusRules", JSON.stringify(enabled));
+  else params.delete("focusRules");
 }
 
 async function loadSessions(keepSelection = true, useApplied = false, quiet = false) {
@@ -144,6 +186,7 @@ async function loadRequests(useApplied = false, quiet = false) {
   if (!state.selected) return;
   const params = useApplied ? new URLSearchParams(state.appliedRequestParams) : paramsFromForm(byId("request-filters"));
   const appliedFilter = useApplied ? state.appliedRequestFilter : requestExportFilter();
+  appendFocusParams(params);
   params.set("page", state.page);
   params.set("pageSize", state.pageSize);
   if (!quiet) setStatus("正在查询请求…");
@@ -173,6 +216,10 @@ function renderRequests(items) {
   for (const item of items) {
     const row = document.createElement("tr");
     row.className = "request-row";
+    if (item.focused) {
+      row.classList.add("focused");
+      row.title = "命中 Focus 规则";
+    }
     if (item.id === state.requestId) row.classList.add("active");
     const selectCell = document.createElement("td");
     const checkbox = document.createElement("input");
@@ -205,6 +252,62 @@ function renderRequests(items) {
     row.append(cell); body.append(row);
   }
   renderSelectedRequestCount();
+}
+
+function renderFocusRules() {
+  const count = enabledFocusRules().length;
+  byId("focus-count").textContent = count;
+  const container = byId("focus-rules");
+  container.replaceChildren();
+  if (!state.focusRules.length) {
+    const empty = document.createElement("p");
+    empty.className = "body-note";
+    empty.textContent = "暂无 Focus 规则。添加 Host、Path 或 URL 后，请求列表会高亮命中项。";
+    container.append(empty);
+    return;
+  }
+  for (const rule of state.focusRules) {
+    const row = document.createElement("div");
+    row.className = "focus-rule";
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = !!rule.enabled;
+    enabled.title = "启用 Focus 规则";
+    enabled.addEventListener("change", () => {
+      rule.enabled = enabled.checked;
+      saveFocusRules(rule.enabled ? "Focus 规则已启用" : "Focus 规则已停用");
+    });
+    const content = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = rule.name || rule.pattern;
+    const detail = document.createElement("small");
+    detail.textContent = focusRuleLabel(rule);
+    content.append(title, detail);
+    const actions = document.createElement("div");
+    actions.className = "focus-rule-actions";
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "danger";
+    deleteButton.textContent = "删除";
+    deleteButton.addEventListener("click", () => {
+      state.focusRules = state.focusRules.filter(item => item.id !== rule.id);
+      saveFocusRules("Focus 规则已删除");
+    });
+    actions.append(deleteButton);
+    row.append(enabled, content, actions);
+    container.append(row);
+  }
+}
+
+function focusRuleLabel(rule) {
+  const typeMap = {
+    url_contains: "URL 包含",
+    host_contains: "Host 包含",
+    path_contains: "Path 包含",
+    method_url_contains: "Method + URL"
+  };
+  const method = rule.type === "method_url_contains" && rule.method ? rule.method + " · " : "";
+  return (typeMap[rule.type] || "URL 包含") + " · " + method + rule.pattern;
 }
 
 function renderSelectedRequestCount() {
@@ -638,6 +741,35 @@ function statusClass(status) {
 
 byId("session-filters").addEventListener("submit", event => { event.preventDefault(); loadSessions(false); });
 byId("request-filters").addEventListener("submit", event => { event.preventDefault(); state.page = 1; loadRequests(); });
+byId("focus-mode").addEventListener("change", () => { state.page = 1; loadRequests(); });
+byId("focus-panel-toggle").addEventListener("click", () => {
+  byId("focus-panel").hidden = !byId("focus-panel").hidden;
+});
+byId("focus-type").addEventListener("change", () => {
+  byId("focus-method").disabled = byId("focus-type").value !== "method_url_contains";
+});
+byId("focus-add-rule").addEventListener("click", () => {
+  const pattern = byId("focus-pattern").value.trim();
+  if (!pattern) {
+    setStatus("Focus 规则内容不能为空", true);
+    byId("focus-pattern").focus();
+    return;
+  }
+  const type = byId("focus-type").value;
+  const rule = {
+    id: "local-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+    name: byId("focus-name").value.trim(),
+    type,
+    method: type === "method_url_contains" ? byId("focus-method").value : "",
+    pattern,
+    enabled: true,
+    createdAt: Date.now()
+  };
+  state.focusRules.push(rule);
+  byId("focus-name").value = "";
+  byId("focus-pattern").value = "";
+  saveFocusRules("Focus 规则已添加");
+});
 byId("previous-page").addEventListener("click", () => { if (state.page > 1) { state.page--; loadRequests(); } });
 byId("next-page").addEventListener("click", () => { if (state.page * state.pageSize < state.total) { state.page++; loadRequests(); } });
 byId("close-detail").addEventListener("click", closeDetail);
@@ -676,9 +808,13 @@ function sessionExportFilter() {
 
 function requestExportFilter() {
   const params = paramsFromForm(byId("request-filters"));
+  const focusMode = params.get("focus") || "all";
+  const focusRules = enabledFocusRules();
   return {
     Search: params.get("q") || "", Method: params.get("method") || "",
     Status: params.get("status") || "", ContentType: params.get("contentType") || "",
+    FocusMode: focusMode,
+    FocusRules: focusRules,
     MinDurationMS: Number(params.get("minDurationMs") || 0),
     MaxDurationMS: Number(params.get("maxDurationMs") || 0),
     MinSize: Number(params.get("minSize") || 0),
@@ -832,4 +968,5 @@ function startLive() {
   window.addEventListener("beforeunload", () => stream.close());
 }
 
-loadSessions(false).then(startLive);
+byId("focus-method").disabled = byId("focus-type").value !== "method_url_contains";
+loadFocusRules().then(() => loadSessions(false)).then(startLive);

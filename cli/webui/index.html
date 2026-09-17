@@ -49,12 +49,37 @@
           <label>Method<select name="method"><option value="">全部</option><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
           <label>状态<input name="status" placeholder="200 / 2xx"></label>
           <label>Content-Type<input name="contentType" placeholder="json"></label>
-          <label>耗时下限 ms<input name="minDurationMs" type="number" min="0"></label>
-          <label>耗时上限 ms<input name="maxDurationMs" type="number" min="0"></label>
-          <label>大小下限 B<input name="minSize" type="number" min="0"></label>
-          <label>大小上限 B<input name="maxSize" type="number" min="0"></label>
+          <label>Focus<select name="focus" id="focus-mode"><option value="all">全部，高亮 Focus</option><option value="only">只看 Focus</option><option value="exclude">隐藏 Focus</option></select></label>
           <label>排序<select name="sort"><option value="desc">最新优先</option><option value="asc">最早优先</option></select></label>
+          <button id="focus-panel-toggle" type="button">Focus 规则 <span id="focus-count">0</span></button>
           <button>查询</button>
+          <section id="focus-panel" class="focus-panel" hidden>
+            <p>Focus 只影响当前 Web 查看，不会改变 APK 选择的抓包 App 范围。可保存多条常用域名或接口规则。</p>
+            <div class="focus-add-row">
+              <input id="focus-name" placeholder="名称，可选">
+              <select id="focus-type">
+                <option value="url_contains">URL 包含</option>
+                <option value="host_contains">Host 包含</option>
+                <option value="path_contains">Path 包含</option>
+                <option value="method_url_contains">Method + URL</option>
+              </select>
+              <select id="focus-method">
+                <option value="">任意 Method</option><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
+              </select>
+              <input id="focus-pattern" placeholder="例如 iotservice.garvee.com/api/v1/device">
+              <button id="focus-add-rule" type="button">添加</button>
+            </div>
+            <div id="focus-rules" class="focus-rules"></div>
+          </section>
+          <details class="advanced-filters">
+            <summary>高级筛选</summary>
+            <div class="advanced-grid">
+              <label>耗时下限 ms<input name="minDurationMs" type="number" min="0"></label>
+              <label>耗时上限 ms<input name="maxDurationMs" type="number" min="0"></label>
+              <label>大小下限 B<input name="minSize" type="number" min="0"></label>
+              <label>大小上限 B<input name="maxSize" type="number" min="0"></label>
+            </div>
+          </details>
         </form>
         <div class="request-summary">
           <span><span id="request-count">0 条请求</span> · 已选 <span id="selected-request-count">0</span><span id="new-request-hint" hidden></span></span>

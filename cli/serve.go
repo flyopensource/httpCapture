@@ -92,6 +92,7 @@ func serveCommand(args []string) error {
 	fmt.Println("httpcapture serve 已启动；本地 Web:", webURL)
 	fmt.Println("会话目录:", index.root)
 	var controlServer *http.Server
+	var serveStartedProxify *proxifyProcessState
 	resolvedControlHost, controlEnabled, err := resolveServeControlHost(*controlHost, *controlPair)
 	if err != nil {
 		return err
@@ -103,9 +104,11 @@ func serveCommand(args []string) error {
 		fmt.Println("当前仅监听本机回环地址；如需 APK 联动，直接运行 `httpcapture serve`。")
 	} else {
 		if *controlEngine == engineProxify {
-			if err := ensureManagedProxify(proxyPort.value); err != nil {
+			started, err := ensureManagedProxifyForServe(proxyPort.value)
+			if err != nil {
 				return err
 			}
+			serveStartedProxify = started
 		}
 		if *certPath == "" {
 			*certPath = findProxyCA(*controlEngine)
@@ -186,14 +189,74 @@ func serveCommand(args []string) error {
 			if controlServer != nil {
 				_ = controlServer.Shutdown(ctx)
 			}
-			return server.Shutdown(ctx)
+			if err := server.Shutdown(ctx); err != nil {
+				return err
+			}
+			return stopServeStartedProxify(serveStartedProxify)
 		case err := <-serverErr:
 			if errors.Is(err, http.ErrServerClosed) {
-				return nil
+				return stopServeStartedProxify(serveStartedProxify)
 			}
 			return fmt.Errorf("本地 Web 服务中断: %w", err)
 		}
 	}
+}
+
+func ensureManagedProxifyForServe(port int) (*proxifyProcessState, error) {
+	if state, err := readProxifyState(); err == nil && managedProcessMatches(state.PID, state.StartToken) {
+		if state.Port != port {
+			return nil, fmt.Errorf("Proxify 已运行在端口 %d，当前配置端口为 %d", state.Port, port)
+		}
+		return nil, nil
+	}
+	if err := proxifyStart([]string{"--host", "0.0.0.0", "--port", strconv.Itoa(port)}); err != nil {
+		return nil, err
+	}
+	state, err := readProxifyState()
+	if err != nil {
+		return nil, fmt.Errorf("读取 serve 启动的 Proxify 状态: %w", err)
+	}
+	return &state, nil
+}
+
+func stopServeStartedProxify(started *proxifyProcessState) error {
+	if started == nil {
+		return nil
+	}
+	current, err := readProxifyState()
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("serve 启动的 Proxify 已不在运行。")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("关闭 serve 启动的 Proxify 前读取状态失败: %w", err)
+	}
+	if current.PID != started.PID || current.StartToken != started.StartToken {
+		fmt.Fprintf(os.Stderr, "警告: Proxify 状态已变化，未停止当前 PID=%d；如需关闭请执行 `httpcapture proxy proxify stop`。\n", current.PID)
+		return nil
+	}
+	if !managedProcessMatches(started.PID, started.StartToken) {
+		if err := os.Remove(proxifyStatePath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		fmt.Println("serve 启动的 Proxify 已退出，已清理状态。")
+		return nil
+	}
+	if err := terminateManagedProcess(started.PID); err != nil {
+		return fmt.Errorf("停止 serve 启动的 Proxify: %w", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for managedProcessMatches(started.PID, started.StartToken) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if managedProcessMatches(started.PID, started.StartToken) {
+		return errors.New("serve 启动的 Proxify 在 5 秒内未退出；请执行 `httpcapture proxy proxify stop`")
+	}
+	if err := os.Remove(proxifyStatePath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	fmt.Printf("serve 已停止 Proxify，PID=%d\n", started.PID)
+	return nil
 }
 
 func resolveServeControlHost(controlHost string, pair bool) (string, bool, error) {

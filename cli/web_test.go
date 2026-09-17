@@ -66,6 +66,21 @@ func TestWebIndexSearchFiltersAndDetail(t *testing.T) {
 	if len(all.Items) != 2 || all.Items[0].TimestampMS >= all.Items[1].TimestampMS {
 		t.Fatalf("ascending order failed: %#v", all.Items)
 	}
+	focusRules := []focusRule{{Type: "host_contains", Pattern: "api.example.test", Enabled: true}}
+	focusOnly, err := index.listRequests(context.Background(), requestQuery{SessionID: sessionID, FocusMode: "only", FocusRules: focusRules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if focusOnly.Total != 1 || !focusOnly.Items[0].Focused || focusOnly.Items[0].Host != "api.example.test" {
+		t.Fatalf("focus-only filter failed: %#v", focusOnly)
+	}
+	focusExclude, err := index.listRequests(context.Background(), requestQuery{SessionID: sessionID, FocusMode: "exclude", FocusRules: focusRules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if focusExclude.Total != 1 || focusExclude.Items[0].Focused || focusExclude.Items[0].Host != "cdn.example.test" {
+		t.Fatalf("focus-exclude filter failed: %#v", focusExclude)
+	}
 	binaryDetail, err := index.requestDetail(context.Background(), sessionID, all.Items[1].ID)
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +165,19 @@ func TestWebApplicationLocalSecurityAndDownloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := &webApplication{index: index, token: "test-token", ui: ui}
+	focusPayload := `{"rules":[{"type":"url_contains","pattern":"example.test/data","enabled":true}]}`
+	focusDenied := performWebRequestWithBody(app, http.MethodPut, "/api/focus", "", true, focusPayload)
+	if focusDenied.Code != http.StatusForbidden {
+		t.Fatalf("focus save without token: %d", focusDenied.Code)
+	}
+	focusSaved := performWebRequestWithBody(app, http.MethodPut, "/api/focus", "test-token", true, focusPayload)
+	if focusSaved.Code != http.StatusOK {
+		t.Fatalf("focus save: %d %s", focusSaved.Code, focusSaved.Body.String())
+	}
+	focusRead := performWebRequest(app, http.MethodGet, "/api/focus", "", true)
+	if focusRead.Code != http.StatusOK || !strings.Contains(focusRead.Body.String(), "example.test/data") {
+		t.Fatalf("focus read: %d %s", focusRead.Code, focusRead.Body.String())
+	}
 	response := performWebRequest(app, http.MethodGet, "/", "", true)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "test-token") {
 		t.Fatalf("index response: %d %s", response.Code, response.Body.String())
@@ -262,7 +290,14 @@ func webTestTransaction(timestamp int64, method, target string, status int, dura
 }
 
 func performWebRequest(handler http.Handler, method, target, token string, local bool) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(method, target, nil)
+	return performWebRequestWithBody(handler, method, target, token, local, "")
+}
+
+func performWebRequestWithBody(handler http.Handler, method, target, token string, local bool, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if local {
 		request.RemoteAddr = "127.0.0.1:32100"
 	} else {

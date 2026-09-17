@@ -216,6 +216,10 @@ func (app *webApplication) serveAPI(response http.ResponseWriter, request *http.
 		writeJSON(response, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	if request.URL.Path == "/api/focus" {
+		app.handleFocusRules(response, request)
+		return
+	}
 	if request.URL.Path == "/api/sessions" && request.Method == http.MethodGet {
 		app.handleSessions(response, request)
 		return
@@ -333,7 +337,22 @@ func (app *webApplication) handleRequests(response http.ResponseWriter, request 
 		Method:        query.Get("method"),
 		Status:        query.Get("status"),
 		ContentType:   query.Get("contentType"),
+		FocusMode:     query.Get("focus"),
 		SortAscending: strings.EqualFold(query.Get("sort"), "asc"),
+	}
+	if encoded := query.Get("focusRules"); encoded != "" {
+		if err := json.Unmarshal([]byte(encoded), &filter.FocusRules); err != nil {
+			writeAPIError(response, http.StatusBadRequest, "Focus 规则无效")
+			return
+		}
+	}
+	if filter.FocusMode != "" && len(filter.FocusRules) == 0 {
+		document, err := app.readFocusRules()
+		if err != nil {
+			writeAPIError(response, http.StatusInternalServerError, err.Error())
+			return
+		}
+		filter.FocusRules = document.Rules
 	}
 	var err error
 	if filter.FromMS, err = optionalInt64(query, "fromMs"); err == nil {

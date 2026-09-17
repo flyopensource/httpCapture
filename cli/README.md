@@ -232,8 +232,9 @@ httpcapture web --sessions /path/to/httpcapture-sessions --no-open
 
 - 会话按时间倒序，并可按引擎、包名、设备和时间范围筛选。
 - 请求可全文搜索 URL、Host、Path、Method、状态、Header 和文本 Body。
-- 支持 Method、状态码或状态组（如 `2xx`）、Content-Type、耗时、大小以及时间正倒序组合过滤。
-- 详情展示 Query、请求/响应 Headers、文本 Body 和基础时序。
+- 支持 Method、状态码或状态组（如 `2xx`）、Content-Type、Focus 以及时间正倒序组合过滤；耗时和大小过滤放在“高级筛选”。
+- Focus 可保存多条 Host、Path、URL 或 Method + URL 关注规则，请求列表可高亮、只看 Focus 或隐藏 Focus。Focus 只影响 Web 查看，不改变 APK 选择的抓包 App 范围。
+- 详情展示 Query、请求/响应 Headers、请求体 Text/Form/Raw、响应体 Text/JSON/Raw 和基础时序。
 - 请求详情支持复制为 cURL，或复制 cURL + 响应；完整文本请求/响应体会写入复制内容，二进制或截断 Body 会提示未包含。
 - 二进制 Body 不直接展开，超大文本只显示有限预览。
 - 可下载会话 HAR、调用系统文件管理器打开会话目录。
@@ -256,7 +257,7 @@ httpcapture serve --control-host 192.168.1.10
 httpcapture serve --no-pair
 ```
 
-`serve` 在前台持续显示服务和会话状态，同时启动只监听 `127.0.0.1` 的本地 Web。单次会话停止后服务继续运行；按 `Ctrl+C` 时会检查活动会话并走正常停止/归档流程。
+`serve` 在前台持续显示服务和会话状态，同时启动只监听 `127.0.0.1` 的本地 Web。单次会话停止后服务继续运行；按 `Ctrl+C` 时会检查活动会话并走正常停止/归档流程。如果 Proxify 是本次 `serve` 自动启动的，退出时也会自动停止该 Proxify；如果 Proxify 在 `serve` 前已运行，则不会擅自关闭。
 
 默认情况下 `serve` 会自动识别局域网 IP、开放受认证手机控制接口，并生成一次性 v4 配对二维码。只想启动本机 Web 查看器时，使用 `--no-pair`：
 
