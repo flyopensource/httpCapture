@@ -313,6 +313,7 @@ func proxifyEngineCommand(args []string) error {
 		Directory:      *configDir, CertCacheSize: 256, MaxSize: int(*maxBodyBytes),
 		Verbosity: types.VerbositySilent, Elastic: &elastic.Options{}, Kafka: &kafka.Options{},
 		OnRequestCallback: func(req *http.Request, ctx *martian.Context) error {
+			restorePlainHTTPURLScheme(req)
 			state := captureRequest(req, *maxBodyBytes)
 			ctx.Set(proxifyRequestStateKey, state)
 			return nil
@@ -336,6 +337,19 @@ func proxifyEngineCommand(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "httpCapture Proxify %s (%s) 监听 %s:%d\n", proxifyEngineVersion, proxifySourceRevision[:12], *host, *port)
 	return proxy.Run()
+}
+
+func restorePlainHTTPURLScheme(req *http.Request) {
+	if req == nil || req.URL == nil {
+		return
+	}
+	// tun2proxy carries every TCP connection through CONNECT, including port 80.
+	// The Martian version embedded by Proxify upgrades an origin-form request with
+	// no scheme to HTTPS before this callback. A plain tunneled HTTP request has no
+	// TLS state, so restore its original scheme before the upstream round trip.
+	if req.TLS == nil && req.URL.Scheme == "https" {
+		req.URL.Scheme = "http"
+	}
 }
 
 func captureRequest(req *http.Request, maxBodyBytes int64) proxifyRequestState {
