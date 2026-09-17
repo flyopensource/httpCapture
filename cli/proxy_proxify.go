@@ -114,7 +114,7 @@ func proxifyStart(args []string) error {
 	}
 	fs := flag.NewFlagSet("proxy proxify start", flag.ContinueOnError)
 	host := fs.String("host", "0.0.0.0", "Proxify 监听地址")
-	port := fs.Int("port", 8888, "Proxify 监听端口")
+	port := fs.Int("port", 8899, "Proxify 监听端口")
 	maxBodyBytes := fs.Int64("max-body-bytes", defaultMaxBodyBytes, "每个请求或响应最多保存的 Body 字节数")
 	if err := fs.Parse(args); err != nil {
 		return err

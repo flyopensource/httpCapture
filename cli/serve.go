@@ -27,7 +27,7 @@ func serveCommand(args []string) error {
 	controlPair := flags.Bool("pair", true, "打印一次性 v4 配对二维码")
 	controlEngine := flags.String("engine", engineProxify, "手机联动使用的代理引擎：proxify 或 charles")
 	var proxyPort optionalPort
-	flags.Var(&proxyPort, "proxy-port", "手机代理端口；Proxify/Charles 默认 8888")
+	flags.Var(&proxyPort, "proxy-port", "手机代理端口；Proxify 默认 8899，Charles 默认 8888")
 	certPath := flags.String("cert", "", "代理 CA 证书（DER 或 PEM）；默认按引擎自动查找")
 	profileName := flags.String("name", "", "配对配置名称")
 	deviceName := flags.String("device-name", "Android", "本次配对的设备名称")

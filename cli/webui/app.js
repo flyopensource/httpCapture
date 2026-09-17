@@ -248,29 +248,235 @@ async function openDetail(requestId) {
     byId("detail-query").textContent = pretty(detail.query);
     byId("request-headers").textContent = pretty(detail.requestHeaders);
     byId("response-headers").textContent = pretty(detail.responseHeaders);
-    renderBody(byId("request-body"), detail.requestBody);
-    renderBody(byId("response-body"), detail.responseBody);
+    renderBody(byId("request-body"), detail.requestBody, "request", detail.requestHeaders);
+    renderBody(byId("response-body"), detail.responseBody, "response", detail.responseHeaders);
   } catch (error) { setStatus(error.message, true); }
 }
 
 function fact(text) { const span = document.createElement("span"); span.textContent = text; return span; }
 
-function renderBody(container, payload) {
+function renderBody(container, payload, side, headers = {}) {
   container.replaceChildren();
   const note = document.createElement("p"), flags = [];
   note.className = "body-note";
-  flags.push(formatBytes(payload.capturedSize) + " 已保存");
-  if (payload.declaredSize > payload.capturedSize) flags.push("声明 " + formatBytes(payload.declaredSize));
-  if (payload.truncated) flags.push("采集时已截断");
-  if (payload.displayTruncated) flags.push("页面预览已截断");
-  if (payload.readError) flags.push(payload.readError);
+  const capturedSize = Number(payload?.capturedSize || 0);
+  flags.push(formatBytes(capturedSize) + " 已保存");
+  if (payload?.declaredSize > payload?.capturedSize) flags.push("声明 " + formatBytes(payload.declaredSize));
+  if (payload?.truncated) flags.push("采集时已截断");
+  if (payload?.displayTruncated) flags.push("页面预览已截断");
+  if (payload?.readError) flags.push(payload.readError);
   note.textContent = flags.join(" · ");
   container.append(note);
-  if (payload.data) {
-    const pre = document.createElement("pre"); pre.textContent = payload.data; container.append(pre);
-  } else if (payload.encoding === "base64") {
-    const binary = document.createElement("p"); binary.textContent = "二进制 Body 不在页面内展开。"; container.append(binary);
+
+  if (capturedSize <= 0) {
+    const empty = document.createElement("p");
+    empty.className = "body-empty";
+    empty.textContent = "无 Body。";
+    container.append(empty);
+    return;
   }
+
+  const contentType = firstHeaderValue(headers, "content-type");
+  const binary = isLikelyBinaryBody(payload, contentType);
+  if (binary) {
+    container.append(binaryBodyMessage(payload));
+    return;
+  }
+
+  const specs = side === "response"
+    ? responseBodyViews(payload, contentType)
+    : requestBodyViews(payload, contentType);
+  renderBodyTabs(container, specs);
+}
+
+function requestBodyViews(payload, contentType) {
+  return [
+    bodyView("Text", textBodyView(payload)),
+    bodyView("Form", formBodyView(payload, contentType)),
+    bodyView("Raw", rawBodyView(payload))
+  ];
+}
+
+function responseBodyViews(payload, contentType) {
+  return [
+    bodyView("Text", textBodyView(payload)),
+    bodyView("JSON", jsonBodyView(payload, contentType)),
+    bodyView("Raw", rawBodyView(payload))
+  ];
+}
+
+function bodyView(label, result) {
+  return { label, ...result };
+}
+
+function textBodyView(payload) {
+  const text = payloadText(payload);
+  if (text === null) return unavailableView("Body 不是文本。");
+  return { available: true, text };
+}
+
+function rawBodyView(payload) {
+  const text = payloadText(payload);
+  if (text === null) return unavailableView("Raw 仅支持文本 Body；二进制请使用下载。");
+  return { available: true, text };
+}
+
+function jsonBodyView(payload, contentType) {
+  const text = payloadText(payload);
+  if (text === null) return unavailableView("Body 不是文本。");
+  try {
+    return { available: true, text: JSON.stringify(JSON.parse(text), null, 2), preferred: isJSONContent(contentType) };
+  } catch {
+    return unavailableView("不是有效 JSON。");
+  }
+}
+
+function formBodyView(payload, contentType) {
+  const text = payloadText(payload);
+  if (text === null) return unavailableView("Body 不是文本。");
+  const mediaType = mediaTypeOf(contentType);
+  if (!mediaType.includes("x-www-form-urlencoded") && !looksFormEncoded(text)) {
+    return unavailableView("不是 application/x-www-form-urlencoded。");
+  }
+  try {
+    const params = new URLSearchParams(text);
+    const rows = [];
+    for (const [key, value] of params) rows.push([key, value]);
+    if (!rows.length && text.trim()) return unavailableView("未解析到表单字段。");
+    return { available: true, tableRows: rows, preferred: true };
+  } catch {
+    return unavailableView("表单解析失败。");
+  }
+}
+
+function unavailableView(message) {
+  return { available: false, message };
+}
+
+function renderBodyTabs(container, specs) {
+  const tabs = document.createElement("div");
+  tabs.className = "body-tabs";
+  const view = document.createElement("div");
+  view.className = "body-view";
+  container.append(tabs, view);
+
+  const preferred = specs.findIndex(spec => spec.available && spec.preferred);
+  const firstAvailable = specs.findIndex(spec => spec.available);
+  let active = preferred >= 0 ? preferred : Math.max(firstAvailable, 0);
+
+  const renderActive = () => {
+    [...tabs.children].forEach((button, index) => {
+      button.classList.toggle("active", index === active);
+      button.setAttribute("aria-selected", index === active ? "true" : "false");
+    });
+    view.replaceChildren(bodyViewContent(specs[active]));
+  };
+
+  specs.forEach((spec, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "body-tab";
+    button.textContent = spec.label;
+    button.disabled = !spec.available;
+    if (!spec.available) button.title = spec.message || "不可用";
+    button.addEventListener("click", () => { active = index; renderActive(); });
+    tabs.append(button);
+  });
+  renderActive();
+}
+
+function bodyViewContent(spec) {
+  if (!spec.available) {
+    const message = document.createElement("p");
+    message.className = "body-empty";
+    message.textContent = spec.message || "不可用。";
+    return message;
+  }
+  if (spec.tableRows) {
+    const table = document.createElement("table");
+    table.className = "form-table";
+    const tbody = document.createElement("tbody");
+    for (const [key, value] of spec.tableRows) {
+      const row = document.createElement("tr");
+      const keyCell = document.createElement("th");
+      const valueCell = document.createElement("td");
+      keyCell.textContent = key;
+      valueCell.textContent = value;
+      row.append(keyCell, valueCell);
+      tbody.append(row);
+    }
+    table.append(tbody);
+    return table;
+  }
+  const pre = document.createElement("pre");
+  pre.textContent = spec.text || "";
+  return pre;
+}
+
+function binaryBodyMessage(payload) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "binary-body";
+  const text = document.createElement("p");
+  text.textContent = "二进制 Body 不在页面内展开。";
+  wrapper.append(text);
+  if (payload?.downloadUrl || payload?.downloadURL) {
+    const link = document.createElement("a");
+    link.className = "button";
+    link.href = payload.downloadUrl || payload.downloadURL;
+    link.textContent = "下载原始 Body";
+    wrapper.append(link);
+  }
+  return wrapper;
+}
+
+function payloadText(payload) {
+  if (!payload || payload.encoding !== "utf8" || typeof payload.data !== "string") return null;
+  return payload.data;
+}
+
+function isLikelyBinaryBody(payload, contentType) {
+  if (!payload || payload.encoding === "base64") return true;
+  const mediaType = mediaTypeOf(contentType);
+  if (mediaType.startsWith("image/") || mediaType.startsWith("audio/") || mediaType.startsWith("video/") ||
+      ["application/octet-stream", "application/pdf", "application/zip", "application/gzip",
+       "application/x-gzip", "application/x-7z-compressed", "application/x-rar-compressed",
+       "application/vnd.android.package-archive"].includes(mediaType)) {
+    return true;
+  }
+  const text = payloadText(payload);
+  if (text === null || text.length === 0) return false;
+  let controls = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 0) return true;
+    if (code < 32 && code !== 9 && code !== 10 && code !== 13) controls++;
+  }
+  return controls > 8 && controls / text.length > 0.01;
+}
+
+function firstHeaderValue(headers, name) {
+  const wanted = name.toLowerCase();
+  for (const key of Object.keys(headers || {})) {
+    if (key.toLowerCase() !== wanted) continue;
+    const value = headers[key];
+    return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+  }
+  return "";
+}
+
+function mediaTypeOf(contentType) {
+  return String(contentType || "").split(";")[0].trim().toLowerCase();
+}
+
+function isJSONContent(contentType) {
+  const mediaType = mediaTypeOf(contentType);
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
+function looksFormEncoded(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[") || !trimmed.includes("=")) return false;
+  return /^[A-Za-z0-9_.~%+\-:[\]]+=/.test(trimmed);
 }
 
 async function copyCurrentRequestAsCurl() {

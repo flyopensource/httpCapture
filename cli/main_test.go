@@ -214,8 +214,8 @@ func TestProxyEngineDefaultsAndMitmproxyCA(t *testing.T) {
 	if defaultProxyPort(engineCharles) != 8888 || defaultProxyPort(engineCustom) != 8888 {
 		t.Fatal("Charles/custom default port changed")
 	}
-	if defaultProxyPort(engineProxify) != 8888 {
-		t.Fatal("Proxify default port must be 8888")
+	if defaultProxyPort(engineProxify) != 8899 {
+		t.Fatal("Proxify default port must be 8899")
 	}
 	if defaultProxyPort(engineMitmproxy) != 8080 {
 		t.Fatal("mitmproxy default port must be 8080")
@@ -550,7 +550,7 @@ func TestDefaultProxifyPairingV3EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if payload.Version != 3 || payload.Engine != engineProxify || payload.Port != 8888 {
+	if payload.Version != 3 || payload.Engine != engineProxify || payload.Port != 8899 {
 		t.Fatalf("unexpected pairing payload: %+v", payload)
 	}
 	request, _ := http.NewRequest(http.MethodPost, downloadURL, nil)

@@ -112,7 +112,7 @@ func usage() {
 
 用法:
   httpcapture pair [--engine proxify|charles|mitmproxy|custom] [--host IP] [--port PORT] [--cert FILE] [--name NAME] [--out pair.png] [--serve-port 0] [--timeout 3m] [--terminal-qr auto|always|never]
-  httpcapture proxy proxify start [--host 0.0.0.0] [--port 8888] [--max-body-bytes 4194304]
+  httpcapture proxy proxify start [--host 0.0.0.0] [--port 8899] [--max-body-bytes 4194304]
   httpcapture proxy proxify stop
   httpcapture proxy proxify status
   httpcapture proxy mitm start [--host 0.0.0.0] [--port 8080] [--bin mitmdump]
@@ -170,7 +170,7 @@ func pairCommand(args []string) error {
 	engine := fs.String("engine", engineProxify, "代理引擎：proxify、charles、mitmproxy 或 custom")
 	host := fs.String("host", "", "手机能访问的电脑 IP")
 	var port optionalPort
-	fs.Var(&port, "port", "HTTP proxy 端口；Proxify/Charles 默认 8888，mitmproxy 默认 8080")
+	fs.Var(&port, "port", "HTTP proxy 端口；Proxify 默认 8899，Charles/custom 默认 8888，mitmproxy 默认 8080")
 	certPath := fs.String("cert", "", "代理 CA 证书（DER 或 PEM）")
 	name := fs.String("name", "", "此代理配置名称")
 	out := fs.String("out", "httpcapture-pair.png", "二维码 PNG 路径")
@@ -381,6 +381,9 @@ func validProxyEngine(engine string) bool {
 func defaultProxyPort(engine string) int {
 	if engine == engineMitmproxy {
 		return 8080
+	}
+	if engine == engineProxify {
+		return 8899
 	}
 	return 8888
 }

@@ -61,12 +61,12 @@ httpcapture proxy proxify status
 httpcapture proxy proxify stop
 ```
 
-默认监听 `0.0.0.0:8888`，每个请求或响应最多保存 4 MiB Body。可以调整监听地址、端口和上限：
+默认监听 `0.0.0.0:8899`，每个请求或响应最多保存 4 MiB Body。可以调整监听地址、端口和上限：
 
 ```bash
 httpcapture proxy proxify start \
   --host 0.0.0.0 \
-  --port 8888 \
+  --port 8899 \
   --max-body-bytes 8388608
 ```
 
@@ -98,7 +98,7 @@ CLI 将状态和 `mitmdump.log` 保存在当前用户配置目录，文件权限
 httpcapture pair
 ```
 
-不指定 `--engine` 时使用 Proxify：CLI 自动选择局域网 IPv4、使用端口 `8888`，并读取内嵌 Proxify 生成的 CA。首次配对前先执行：
+不指定 `--engine` 时使用 Proxify：CLI 自动选择局域网 IPv4、使用端口 `8899`，并读取内嵌 Proxify 生成的 CA。首次配对前先执行：
 
 ```bash
 httpcapture proxy proxify start
@@ -152,7 +152,7 @@ mitmproxy 默认端口为 `8080`，默认 CA 为 `~/.mitmproxy/mitmproxy-ca-cert
 | --- | --- | --- |
 | `--engine` | `proxify` | `proxify`、`charles`、`mitmproxy` 或 `custom` |
 | `--host` | 自动检测 | 手机可以访问的本机 IPv4；同时作为代理地址和临时服务监听地址 |
-| `--port` | 按引擎 | Proxify/Charles/custom 为 `8888`，mitmproxy 为 `8080` |
+| `--port` | 按引擎 | Proxify 为 `8899`，Charles/custom 为 `8888`，mitmproxy 为 `8080` |
 | `--cert` | 按引擎查找 | Proxify、Charles 或 mitmproxy CA；custom 必须指定，只支持 DER/PEM |
 | `--name` | CA 名称 | APK 中显示的电脑配置名称 |
 | `--out` | `httpcapture-pair.png` | 二维码 PNG 输出路径 |
